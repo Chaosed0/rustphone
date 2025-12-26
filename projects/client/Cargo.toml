@@ -1,0 +1,9 @@
+[package]
+name = "game"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+game-networking-sockets = "0.1.2"
+raylib = "5.5.1"
+shared = { version = "0.1.0", path = "../shared" }
