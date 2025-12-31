@@ -1,10 +1,15 @@
 #!/bin/bash
 
 DIR="$(dirname "$0")"
-export LIBCLANG_PATH="$PWD/lib"
-export GNS_VCPKG_BUILDTREES_ROOT="/c/vcpkgroot"
+set -o allexport && source .env && set +o allexport
 
-if cargo build "$@"; then
-    [ -d "$DIR/target/debug" ] && cp -r "$DIR/projects/client/assets" "$DIR/target/debug/assets"
-    [ -d "$DIR/target/release" ] && cp -r "$DIR/projects/client/assets" "$DIR/target/release/assets"
+cargo build "$@"
+
+BUILD_RESULT=$?
+
+if [ $BUILD_RESULT -eq 0 ] ; then
+    [ -d "$DIR/target/debug" ] && mkdir -p "$DIR/target/debug/assets/" && cp -r $DIR/projects/client/assets/* "$DIR/target/debug/assets/"
+    [ -d "$DIR/target/release" ] && mkdir -p "$DIR/target/release/assets/" && cp -r $DIR/projects/client/assets/* "$DIR/target/release/assets/"
 fi
+
+exit $BUILD_RESULT
