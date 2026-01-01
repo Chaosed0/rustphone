@@ -1,10 +1,31 @@
 use raylib::core::math::*;
+use std::char::MAX;
 use std::fs::File;
+use std::path::Path;
 use std::io::prelude::*;
 use std::io::BufReader;
 
 const BSP2_VER: i32 = (('B' as i32) << 0) | (('S' as i32) << 8) | (('P' as i32) << 16) | (('2' as i32) << 24);
+const LIT_VER: i32 = (('Q' as i32) << 0) | (('L' as i32) << 8) | (('I' as i32) << 16) | (('T' as i32) << 24);
 const MAX_LIGHTMAPS: usize = 4;
+const NUM_AMBIENTS: usize = 4;
+
+const TEXTURE_SPECIAL: i32 = 1;
+const TEXTURE_MISSING: i32 = 2;
+
+const SURF_PLANEBACK: i32 = 2;
+const SURF_DRAWSKY: i32 = 4;
+const SURF_DRAWSPRITE: i32 = 8;
+const SURF_DRAWTURB: i32 = 0x10;
+const SURF_DRAWTILED: i32 = 0x20;
+const SURF_DRAWBACKGROUND: i32 = 0x40;
+const SURF_UNDERWATER: i32 = 0x80;
+const SURF_NOTEXTURE: i32 = 0x100;
+const SURF_DRAWFENCE: i32 = 0x200;
+const SURF_DRAWLAVA: i32 = 0x400;
+const SURF_DRAWSLIME: i32 = 0x800;
+const SURF_DRAWTELE: i32 = 0x1000;
+const SURF_DRAWWATER: i32 = 0x2000;
 
 pub struct Bsp
 {
@@ -92,7 +113,7 @@ struct Model
 
 	vis_data: Vec<u8>,
 	light_data: Vec<u8>,
-	entities: Vec<i8>,
+	entities: String,
 
 	lit_file: bool,
 	vis_warn: bool,
@@ -135,31 +156,23 @@ struct Plane
 struct Leaf
 {
 	contents: i32,
-	vis_frame: i32,
-	mins: Vector3,
-	maxs: Vector3,
+	visofs: i32, // -1 = no visibility info
 
-	parent_node_index: u32,
+	mins: [u32; 3], // for frustum culling
+	maxs: [u32; 3],
 
-	compressed_vis: Vec<u8>,
-	first_mark_surface: Vec<i32>,
-	num_mark_surfaces: i32,
-	key: i32,
-	ambient_sound_level: [u8;4]
+	firstmarksurface : u32,
+	nummarksurfaces : u32,
+
+	ambient_level: [u8; NUM_AMBIENTS]
 }
 
 struct Node
 {
-	contents: i32,
-	vis_frame: i32,
+	plane_index: u32,
+	children: [i32;2], // Negative are -(leafs+1), not nodes
 	mins: Vector3,
 	maxs: Vector3,
-
-	parent_node_index: u32,
-
-	plane_index: u32,
-	children: [Option<Box<Node>>;2],
-
 	first_surf: u32,
 	num_surf: u32
 }
@@ -178,6 +191,19 @@ struct Edge
 	v1: u16
 }
 
+struct Face
+{
+	planenum: u32,
+	side: i32,
+
+	firstedge: i32,
+	numedges: i32,
+	texinfo: i32,
+
+	styles: [u8; MAX_LIGHTMAPS],
+	lightofs: i32, // start of [numstyles*surfsize] samples
+}
+
 struct Surface
 {
 	plane: u32,
@@ -185,21 +211,20 @@ struct Surface
 	maxs: Vector3,
 	flags: i32,
 	
-	vbo_firstvert: i32, // Index of first vertex in VBO
 	first_edge: i32, // Lookup in model->surfedges, negative are backwards
 	num_edges: i16,
 
-	lightmap_tex_num: i16,
-	extent_x: i16,
-	extent_y: i16,
-	light_s: i16,
-	light_t: i16,
+	//lightmap_tex_num: i16,
+	extent0: i16,
+	extent1: i16,
+	//light_s: i16,
+	//light_t: i16,
 
 	styles: [u8;MAX_LIGHTMAPS],
 	samples: Vec<u8>, // size: numstyles * surfsize
 
-	texture_min_x: i32,
-	texture_min_y: i32,
+	texture_mins0: i32,
+	texture_mins1: i32,
 	tex_info: u32
 }
 
@@ -280,6 +305,7 @@ pub fn load_bsp(filename: &str) -> Bsp
 	read_edges(header.edges, &mut reader, &mut buf);
 	read_surf_edges(header.surf_edges, &mut reader, &mut buf);
 	let mips = read_mips(header.mip_tex, &mut reader, &mut buf);
+	read_lighting(header.lightmaps, &mut reader, &mut buf, &path);
 
 	return Bsp { textures: mips };
 }
@@ -393,6 +419,397 @@ fn read_mips(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>
 	return mip_texs;
 }
 
+fn read_lighting(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>, path: &Path) -> Vec<u8>
+{
+	let lit_filename = path.with_extension("lit");
+
+	if lit_filename.exists()
+	{
+		let file = File::open(&lit_filename).unwrap_or_else(|err| panic!("{err}: couldn't open lit file at {lit_filename:?}!"));
+		let mut lit_reader = BufReader::new(file);
+
+		let lit_header = read_i32(&mut lit_reader, buf);
+		if (lit_header != LIT_VER)
+		{
+			panic!("Header {lit_header} in lit file {lit_filename:?} doesn't match expected ({LIT_VER})!");
+		}
+
+		let lit_version = read_i32(&mut lit_reader, buf);
+		if lit_version != 1
+		{
+			panic!("Version {lit_version} in lit file {lit_filename:?} doesn't match expected (1)!");
+		}
+
+		println!("Loaded lit file {lit_filename:?}");
+		let mut lit_data = Vec::<u8>::new();
+		lit_reader.read_to_end(&mut lit_data).unwrap_or_else(|err| panic!("Couldn't read lit file bytes: {err}"));
+		return lit_data;
+	}
+	else
+	{
+		let mut lit_data = vec![0u8; header.size as usize];
+		reader.read_exact(&mut lit_data).unwrap_or_else(|err| panic!("Couldn't read lighting data from bsp: {err}"));
+		return lit_data;
+	}
+}
+
+fn read_planes(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Plane>
+{
+	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
+		.unwrap_or_else(|err| panic!("{err}: Invalid plane offset {:?}", header.offset));
+	let mut planes = Vec::<Plane>::new();
+	let count = header.size as usize / size_of::<Plane>();
+
+	for _ in 0..count
+	{
+		let normal = read_vec3(reader, buf);
+		let bits = if normal.x < 0f32 { 1 << 0 } else { 0 } |
+			if normal.y < 0f32 { 1 << 1 } else { 0 } |
+			if normal.z < 0f32 { 1 << 2 } else { 0 };
+
+		let dist = read_f32(reader, buf);
+		let p_type = read_u8(reader, buf);
+
+		planes.push(Plane { normal, dist, p_type, sign: bits, _pad0: 0, _pad1: 0 });
+	}
+
+	return planes;
+}
+
+fn read_texinfo(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>, texs: Vec<MipTex>) -> Vec<TexInfo>
+{
+	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
+		.unwrap_or_else(|err| panic!("{err}: Invalid tex_info offset {:?}", header.offset));
+	let mut tex_infos = Vec::<TexInfo>::new();
+	let count = header.size as usize / size_of::<TexInfo>();
+	let mut missing = 0;
+
+	for _ in 0..count
+	{
+		let x0 = read_f32(reader, buf);
+		let x1 = read_f32(reader, buf);
+		let y0 = read_f32(reader, buf);
+		let y1 = read_f32(reader, buf);
+		let z0 = read_f32(reader, buf);
+		let z1 = read_f32(reader, buf);
+		let w0 = read_f32(reader, buf);
+		let w1 = read_f32(reader, buf);
+
+		let mut mip_tex = read_i32(reader, buf);
+		let mut flags = read_i32(reader, buf);
+
+		if mip_tex as usize > texs.len() || texs[mip_tex as usize].width == 0 || texs[mip_tex as usize].height == 0
+		{
+			if flags & TEXTURE_SPECIAL > 0 {
+				mip_tex = (texs.len() - 1) as i32;
+			}
+			else {
+				mip_tex = (texs.len() - 2) as i32;
+			}
+
+			flags = flags | TEXTURE_MISSING;
+			missing += 1;
+		}
+
+		tex_infos.push(TexInfo { vec1: Vector4::new(x0, y0, z0, w0), vec2: Vector4::new(x1, y1, z1, w1), tex_num: mip_tex, flags });
+	}
+
+	if count > 0 && missing > 0
+	{
+		println!("WARNING: Missing {missing} textures in BSP file");
+	}
+
+	return tex_infos;
+}
+
+fn read_faces(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>, light_data: &Vec<u8>, tex_info: &Vec<TexInfo>, textures: &Vec<MipTex>, vertexes: &Vec<Vector3>, surf_edges: &Vec<i32>, edges: &Vec<Edge>) -> Vec<Surface>
+{
+	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
+		.unwrap_or_else(|err| panic!("{err}: Invalid face offset {:?}", header.offset));
+	let mut faces = Vec::<Face>::new();
+	let count = header.size as usize / size_of::<Face>();
+
+	for _ in 0..count
+	{
+		let planenum = read_u32(reader, buf);
+		let side = read_i32(reader, buf);
+		let firstedge = read_i32(reader, buf);
+		let numedges = read_i32(reader, buf);
+		let texinfo = read_i32(reader, buf);
+
+		let styles0 = read_u8(reader, buf);
+		let styles1 = read_u8(reader, buf);
+		let styles2 = read_u8(reader, buf);
+		let styles3 = read_u8(reader, buf);
+		let lightofs = read_i32(reader, buf);
+
+		faces.push(Face { planenum, side, firstedge, numedges, texinfo, styles: [styles0, styles1, styles2, styles3], lightofs});
+	}
+
+	let mut surfs = Vec::<Surface>::new();
+
+	for face in faces
+	{
+		if face.numedges < 3
+		{
+			println!("WARNING: Bad edge count in face: {:?}", face.numedges)
+		}
+
+		let mut flags = if face.side > 0 { SURF_PLANEBACK } else { 0 };
+		let mut samples = Vec::<u8>::new();
+
+		let tex_info = &tex_info[face.texinfo as usize];
+
+		// CALC TEXTURE AND SURFACE BOUNDS
+		let mut tmin0 = Option::<f32>::None;
+		let mut tmax0 = Option::<f32>::None;
+		let mut tmin1 = Option::<f32>::None;
+		let mut tmax1 = Option::<f32>::None;
+		let mut mins = Option::<Vector3>::None;
+		let mut maxs = Option::<Vector3>::None;
+
+		for i in 0..face.numedges
+		{
+			let surf_edge = surf_edges[(face.firstedge + i) as usize];
+			let edge = &edges[surf_edge.abs() as usize];
+			let vert_index = if surf_edge >= 0 { edge.v0 } else { edge.v1 };
+			let vert = vertexes[vert_index as usize];
+
+			// From Ironwail:
+			/* The following calculation is sensitive to floating-point
+			* precision.  It needs to produce the same result that the
+			* light compiler does, because R_BuildLightMap uses surf->
+			* extents to know the width/height of a surface's lightmap,
+			* and incorrect rounding here manifests itself as patches
+			* of "corrupted" looking lightmaps.
+			* Most light compilers are win32 executables, so they use
+			* x87 floating point.  This means the multiplies and adds
+			* are done at 80-bit precision, and the result is rounded
+			* down to 32-bits and stored in val.
+			* Adding the casts to double seems to be good enough to fix
+			* lighting glitches when Quakespasm is compiled as x86_64
+			* and using SSE2 floating-point.  A potential trouble spot
+			* is the hallway at the beginning of mfxsp17.  -- ericw
+			*/
+			let val0 =
+				(vert.x as f64 * tex_info.vec1.x as f64) +
+				(vert.y as f64 * tex_info.vec1.y as f64) +
+				(vert.z as f64 * tex_info.vec1.z as f64) +
+				tex_info.vec1.w as f64;
+
+			let val1 =
+				(vert.x as f64 * tex_info.vec2.x as f64) +
+				(vert.y as f64 * tex_info.vec2.y as f64) +
+				(vert.z as f64 * tex_info.vec2.z as f64) +
+				tex_info.vec2.w as f64;
+
+			tmin0 = match tmin0 {
+				None => Some(val0 as f32),
+				Some(v) => Some(v.min(val0 as f32))
+			};
+
+			tmax0 = match tmax0 {
+				None => Some(val0 as f32),
+				Some(v) => Some(v.max(val0 as f32))
+			};
+
+			tmin1 = match tmin1 {
+				None => Some(val1 as f32),
+				Some(v) => Some(v.min(val1 as f32))
+			};
+
+			tmax1 = match tmax1 {
+				None => Some(val1 as f32),
+				Some(v) => Some(v.max(val1 as f32))
+			};
+
+			mins = match mins {
+				None => Some(vert),
+				Some(v) => Some(v.min(vert))
+			};
+
+			maxs = match maxs {
+				None => Some(vert),
+				Some(v) => Some(v.max(vert))
+			};
+		}
+
+		let bmin0 = 16 * (tmin0.unwrap() / 16f32).floor() as i32;
+		let bmax0 = 16 * (tmax0.unwrap() / 16f32).ceil() as i32;
+		let texture_mins0 = bmin0;
+		let extent0 = (bmax0 - bmin0) as i16;
+
+		let bmin1 = 16 * (tmin1.unwrap() / 16f32).floor() as i32;
+		let bmax1 = 16 * (tmax1.unwrap() / 16f32).ceil() as i32;
+		let texture_mins1 = bmin1;
+		let extent1 = (bmax1 - bmin1) as i16;
+
+		// END CALC SURFACE BOUNDS
+
+		if face.lightofs >= 0
+		{
+			// TODO: I don't know how much this needs to copy
+			samples.extend_from_slice(&light_data[(face.lightofs as usize)..]);
+		}
+
+		let tex: &MipTex = &textures[tex_info.tex_num as usize];
+
+		match tex.tex_type
+		{
+			TextureType::Sky => {
+				flags = flags | (SURF_DRAWSKY | SURF_DRAWTILED);
+			}
+			TextureType::Lava => {
+				flags = flags | (SURF_DRAWTURB | SURF_DRAWLAVA);
+			}
+			TextureType::Slime => {
+				flags = flags | (SURF_DRAWTURB | SURF_DRAWSLIME);
+			}
+			TextureType::Tele => {
+				flags = flags | (SURF_DRAWTURB | SURF_DRAWTELE);
+			}
+			TextureType::Water => {
+				flags = flags | (SURF_DRAWTURB | SURF_DRAWWATER);
+			}
+			TextureType::Cutout => {
+				flags = flags | SURF_DRAWFENCE;
+			}
+			TextureType::Default => ()
+		};
+
+		if tex_info.flags & TEXTURE_MISSING > 0
+		{
+			flags = flags | SURF_NOTEXTURE;
+		}
+
+		surfs.push(Surface {
+			plane: face.planenum,
+			mins: mins.unwrap(),
+			maxs: maxs.unwrap(),
+			flags,
+			first_edge: face.firstedge,
+			num_edges: face.numedges as i16,
+			extent0,
+			extent1,
+			samples,
+			tex_info: face.texinfo as u32,
+			styles: face.styles,
+			texture_mins0,
+			texture_mins1
+		})
+	}
+
+	return surfs;
+}
+
+fn read_marksurfaces(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>, max_surfcount: i32) -> Vec<i32>
+{
+	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
+		.unwrap_or_else(|err| panic!("{err}: Invalid marksurfaces offset {:?}", header.offset));
+	let mut mark_surfaces = Vec::<i32>::new();
+	let count = header.size as usize / size_of::<i32>();
+
+	for _ in 0..count
+	{
+		let mark_surface = read_i32(reader, buf);
+
+		if mark_surface >= max_surfcount {
+			panic!("Bad surface number {mark_surface} (max {max_surfcount})");
+		}
+
+		mark_surfaces.push(mark_surface);
+	}
+
+	return mark_surfaces;
+}
+
+fn read_vis(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<u8>
+{
+	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
+		.unwrap_or_else(|err| panic!("Invalid vis offset {:?}: {err}", header.offset));
+	let mut vis = vec![0u8; header.size as usize];
+	reader.read_exact(vis)
+		.unwrap_or_else(|err| panic!("Could not read vis bytes length {:?}: {err}", header.size));
+	return vis;
+}
+
+fn read_leafs(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Leaf>
+{
+	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
+		.unwrap_or_else(|err| panic!("{err}: Invalid marksurfaces offset {:?}", header.offset));
+	let mut leafs = Vec::<Leaf>::new();
+	let count = header.size as usize / size_of::<Leaf>();
+
+	for _ in 0..count
+	{
+		let contents = read_i32(reader, buf);
+		let visofs = read_i32(reader, buf);
+		let mins = [read_u32(reader, buf), read_u32(reader, buf), read_u32(reader, buf)];
+		let maxs = [read_u32(reader, buf), read_u32(reader, buf), read_u32(reader, buf)];
+		let firstmarksurface = read_u32(reader, buf);
+		let nummarksurfaces = read_u32(reader, buf);
+		let ambient_level = [read_u8(reader, buf), read_u8(reader, buf), read_u8(reader, buf), read_u8(reader, buf)];
+
+		leafs.push(Leaf { contents, visofs, mins, maxs, firstmarksurface, nummarksurfaces, ambient_level })
+	}
+
+	return leafs;
+}
+
+fn read_nodes(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Node>
+{
+	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
+		.unwrap_or_else(|err| panic!("{err}: Invalid nodes offset {:?}", header.offset));
+	let mut nodes = Vec::<Node>::new();
+	let count = header.size as usize / size_of::<Node>();
+
+	for _ in 0..count
+	{
+		let plane_index = read_u32(reader, buf);
+		let child0 = read_i32(reader, buf);
+		let child1 = read_i32(reader, buf);
+		let mins = read_vec3(reader, buf);
+		let maxs = read_vec3(reader, buf);
+		let first_surf = read_u32(reader, buf);
+		let num_surf = read_u32(reader, buf);
+
+		nodes.push(Node { plane_index, children: [child0, child1], mins, maxs, first_surf, num_surf });
+	}
+
+	return nodes;
+}
+
+fn read_clip_nodes(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<ClipNode>
+{
+	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
+		.unwrap_or_else(|err| panic!("{err}: Invalid clip nodes offset {:?}", header.offset));
+	let mut nodes = Vec::<ClipNode>::new();
+	let count = header.size as usize / size_of::<ClipNode>();
+
+	for _ in 0..count
+	{
+		let plane_num = read_i32(reader, buf);
+		let child0 = read_i32(reader, buf);
+		let child1 = read_i32(reader, buf);
+
+		nodes.push(ClipNode { plane_num, children: [child0, child1] });
+	}
+
+	return nodes;
+}
+
+fn read_entities(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> String
+{
+	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
+		.unwrap_or_else(|err| panic!("Invalid entities offset {:?}: {err}", header.offset));
+	let mut data = vec![0u8; header.size as usize];
+	reader.read_exact(&mut data)
+		.unwrap_or_else(|err| panic!("Invalid entities size {:?}: {err}", header.size));
+
+	return String::from_utf8(data)
+		.unwrap_or_else(|err| panic!("Could not obtain utf8 string from entities: {err}"));
+}
+
 fn texture_type_from_name(name: &String) -> TextureType
 {
 	if name.starts_with("*")
@@ -419,6 +836,12 @@ fn texture_type_from_name(name: &String) -> TextureType
 	}
 
 	return TextureType::Default;
+}
+
+fn read_u8(reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> u8
+{
+	reader.read_exact(&mut buf[0..1]).expect("could not read!");
+	return u8::from_le_bytes(buf[0..1].try_into().unwrap());
 }
 
 fn read_u16(reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> u16
