@@ -5,6 +5,7 @@ use glow::*;
 use ::core::ffi::c_void;
 use ::core::num::NonZeroU32;
 use ::core::ptr::addr_of;
+use ::core::fmt::Debug;
 use std::mem::offset_of;
 
 pub struct BspRender
@@ -66,7 +67,7 @@ impl BspRender
 		for surf in &bsp.surfs
 		{
 			let tex_info = &bsp.tex_infos[surf.tex_info as usize];
-			cmds[tex_info.tex_num as usize].count += (surf.num_edges.max(2) - 2) as i32;
+			cmds[tex_info.tex_num as usize].count += ((surf.num_edges.max(2) - 2) * 3) as i32;
 		}
 
 		let mut sum = 0;
@@ -124,17 +125,20 @@ impl BspRender
 			self.gl.bind_buffer(ARRAY_BUFFER, Some(vbo));
 			//self.gl.object_label(BUFFER, vbo.0.get(), Some("VBO"));
 			self.gl.buffer_data_u8_slice(ARRAY_BUFFER, verts_u8, STATIC_DRAW);
+			self.gl.bind_buffer(ARRAY_BUFFER, None);
 
 			let indexes_u8: &[u8] = std::slice::from_raw_parts(indexes.as_ptr() as *const u8, indexes.len() * size_of::<u32>());
 			let ibo = self.gl.create_buffer().unwrap();
-			self.gl.bind_buffer(ARRAY_BUFFER, Some(ibo));
+			self.gl.bind_buffer(ELEMENT_ARRAY_BUFFER, Some(ibo));
 			//self.gl.object_label(BUFFER, ibo.0.get(), Some("IBO"));
-			self.gl.buffer_data_u8_slice(ARRAY_BUFFER, indexes_u8, STATIC_DRAW);
-
-			self.gl.bind_buffer(ARRAY_BUFFER, None);
+			self.gl.buffer_data_u8_slice(ELEMENT_ARRAY_BUFFER, indexes_u8, STATIC_DRAW);
+			self.gl.bind_buffer(ELEMENT_ARRAY_BUFFER, None);
 
 			self.data = Some(RenderData { vbo, ibo, cmds });
 		}
+
+		//println!("VERTS {:?}", verts);
+		//println!("ELEMS {:?}", indexes);
 	}
 
 	pub fn is_ready(&self) -> bool
@@ -174,6 +178,8 @@ impl BspRender
 				self.gl.bind_texture(TEXTURE_2D, Some(gl_tex));
 				self.gl.draw_elements_instanced_base_vertex_base_instance(TRIANGLES, cmd.count, UNSIGNED_INT, cmd.firstIndex * size_of::<u32>() as i32, cmd.instanceCount, cmd.baseVertex, cmd.baseInstance);
 			}
+
+			self.gl.bind_texture(TEXTURE_2D, None);
 
 			self.gl.use_program(None);
 		}
