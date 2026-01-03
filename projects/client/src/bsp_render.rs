@@ -105,8 +105,6 @@ impl BspRender
 				let s = (vec.dot(Vector3::new(tex_info.vec0.x, tex_info.vec0.y, tex_info.vec0.z)) + tex_info.vec0.w) / texture.width as f32;
 				let t = (vec.dot(Vector3::new(tex_info.vec1.x, tex_info.vec1.y, tex_info.vec1.z)) + tex_info.vec1.w) / texture.height as f32;
 
-				println!("Edge {e:?}: {s:?} {t:?} {:?} {:?} {:?}", surf.tex_info, tex_info.vec0, tex_info.vec1);
-
 				verts.push(GlVert { pos: vec, col: Color::WHITE.into(), st: Vector4::new(s, t, 0f32, 0f32) });
 			}
 		}

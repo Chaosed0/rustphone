@@ -343,7 +343,6 @@ fn read_surf_edges(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut V
 	{
 		let surf_edge = read_i32(reader, buf);
 		surf_edges.push(surf_edge);
-		println!("    {surf_edge}");
 	}
 
 	return surf_edges;

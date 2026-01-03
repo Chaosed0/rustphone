@@ -47,7 +47,7 @@ fn main() {
 
 	for (i, surf) in bsp.surfs.iter().enumerate()
 	{
-		println!("SURF {i}: {:?} {:?}", surf.first_edge, surf.num_edges);
+		//println!("SURF {i}: {:?} {:?}", surf.first_edge, surf.num_edges);
 
 		for e in surf.first_edge..(surf.first_edge + surf.num_edges as i32)
 		{
@@ -55,7 +55,7 @@ fn main() {
 			let edge = &bsp.edges[surf_edge.abs() as usize];
 			let (v0, v1) = if surf_edge >= 0 { (edge.v0, edge.v1) } else { (edge.v1, edge.v0) };
 
-			println!("   {surf_edge} {v0}->{v1} {:?}->{:?}", bsp.verts[v0 as usize], bsp.verts[v1 as usize]);
+			//println!("   {surf_edge} {v0}->{v1} {:?}->{:?}", bsp.verts[v0 as usize], bsp.verts[v1 as usize]);
 		}
 	}
 
