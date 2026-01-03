@@ -141,8 +141,8 @@ pub struct Node
 
 pub struct TexInfo
 {
+	pub vec0: Vector4,
 	pub vec1: Vector4,
-	pub vec2: Vector4,
 	pub tex_num: i32,
 	pub flags: i32
 }
@@ -234,8 +234,8 @@ pub fn load_bsp(filename: &str) -> Bsp
 	header.mip_tex = read_dir_entry(&mut reader, &mut buf);
 	header.vertices = read_dir_entry(&mut reader, &mut buf);
 	header.visilist = read_dir_entry(&mut reader, &mut buf);
-	header.tex_info = read_dir_entry(&mut reader, &mut buf);
 	header.nodes = read_dir_entry(&mut reader, &mut buf);
+	header.tex_info = read_dir_entry(&mut reader, &mut buf);
 	header.faces = read_dir_entry(&mut reader, &mut buf);
 	header.lightmaps = read_dir_entry(&mut reader, &mut buf);
 	header.clip_nodes = read_dir_entry(&mut reader, &mut buf);
@@ -476,21 +476,21 @@ fn read_texinfo(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<
 	let count = header.size as usize / size_of::<TexInfo>();
 	let mut missing = 0;
 
-	for _ in 0..count
+	for i in 0..count
 	{
 		let x0 = read_f32(reader, buf);
-		let x1 = read_f32(reader, buf);
 		let y0 = read_f32(reader, buf);
-		let y1 = read_f32(reader, buf);
 		let z0 = read_f32(reader, buf);
-		let z1 = read_f32(reader, buf);
 		let w0 = read_f32(reader, buf);
+		let x1 = read_f32(reader, buf);
+		let y1 = read_f32(reader, buf);
+		let z1 = read_f32(reader, buf);
 		let w1 = read_f32(reader, buf);
 
 		let mut mip_tex = read_i32(reader, buf);
 		let mut flags = read_i32(reader, buf);
 
-		if mip_tex as usize > texs.len() || texs[mip_tex as usize].width == 0 || texs[mip_tex as usize].height == 0
+		if mip_tex as usize >= texs.len() || texs[mip_tex as usize].width == 0 || texs[mip_tex as usize].height == 0
 		{
 			if flags & TEXTURE_SPECIAL > 0 {
 				mip_tex = (texs.len() - 1) as i32;
@@ -503,7 +503,7 @@ fn read_texinfo(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<
 			missing += 1;
 		}
 
-		tex_infos.push(TexInfo { vec1: Vector4::new(x0, y0, z0, w0), vec2: Vector4::new(x1, y1, z1, w1), tex_num: mip_tex, flags });
+		tex_infos.push(TexInfo { vec0: Vector4::new(x0, y0, z0, w0), vec1: Vector4::new(x1, y1, z1, w1), tex_num: mip_tex, flags });
 	}
 
 	if count > 0 && missing > 0
@@ -583,16 +583,16 @@ fn read_faces(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8
 			* is the hallway at the beginning of mfxsp17.  -- ericw
 			*/
 			let val0 =
+				(vert.x as f64 * tex_info.vec0.x as f64) +
+				(vert.y as f64 * tex_info.vec0.y as f64) +
+				(vert.z as f64 * tex_info.vec0.z as f64) +
+				tex_info.vec0.w as f64;
+
+			let val1 =
 				(vert.x as f64 * tex_info.vec1.x as f64) +
 				(vert.y as f64 * tex_info.vec1.y as f64) +
 				(vert.z as f64 * tex_info.vec1.z as f64) +
 				tex_info.vec1.w as f64;
-
-			let val1 =
-				(vert.x as f64 * tex_info.vec2.x as f64) +
-				(vert.y as f64 * tex_info.vec2.y as f64) +
-				(vert.z as f64 * tex_info.vec2.z as f64) +
-				tex_info.vec2.w as f64;
 
 			tmin0 = match tmin0 {
 				None => Some(val0 as f32),

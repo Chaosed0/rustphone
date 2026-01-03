@@ -101,8 +101,11 @@ impl BspRender
 				let v = if edge_index >= 0 { edge.v0 } else { edge.v1 };
 				let vec = bsp.verts[v as usize];
 				let tex_info = &bsp.tex_infos[surf.tex_info as usize];
-				let s = vec.dot(Vector3::new(tex_info.vec1.x, tex_info.vec1.y, tex_info.vec1.z)) + tex_info.vec1.w;
-				let t = vec.dot(Vector3::new(tex_info.vec2.x, tex_info.vec2.y, tex_info.vec2.z)) + tex_info.vec2.w;
+				let texture = &bsp.textures[tex_info.tex_num as usize];
+				let s = (vec.dot(Vector3::new(tex_info.vec0.x, tex_info.vec0.y, tex_info.vec0.z)) + tex_info.vec0.w) / texture.width as f32;
+				let t = (vec.dot(Vector3::new(tex_info.vec1.x, tex_info.vec1.y, tex_info.vec1.z)) + tex_info.vec1.w) / texture.height as f32;
+
+				println!("Edge {e:?}: {s:?} {t:?} {:?} {:?} {:?}", surf.tex_info, tex_info.vec0, tex_info.vec1);
 
 				verts.push(GlVert { pos: vec, col: Color::WHITE.into(), st: Vector4::new(s, t, 0f32, 0f32) });
 			}
@@ -116,8 +119,8 @@ impl BspRender
 			for i in 2..surf.num_edges
 			{
 				indexes[cmd.firstIndex       as usize] = vbo_firstvert;
-				indexes[(cmd.firstIndex + 1) as usize] = vbo_firstvert + i as u32 - 1;
-				indexes[(cmd.firstIndex + 2) as usize] = vbo_firstvert + i as u32;
+				indexes[(cmd.firstIndex + 1) as usize] = vbo_firstvert + i as u32;
+				indexes[(cmd.firstIndex + 2) as usize] = vbo_firstvert + i as u32 - 1;
 
 				cmd.firstIndex += 3;
 			}
@@ -128,6 +131,11 @@ impl BspRender
 		{
 			cmd.firstIndex = sum;
 			sum += cmd.count;
+		}
+
+		for (cmd, tex) in cmds.iter().zip(&bsp.textures)
+		{
+			println!("tex has {:?} cmds", cmd.count)
 		}
 
 		unsafe
@@ -155,9 +163,9 @@ impl BspRender
 			self.data = Some(RenderData { vao, vbo, ibo, cmds });
 
 			let vertices =
-				[GlVert { pos: Vector3::new(0.5f32, 0.5f32, 0.0f32), col: Color::WHITE.into(), st: Vector4::new(1f32, 1f32, 0f32, 0f32) },
+				[GlVert { pos: Vector3::new(-0.5f32, -0.5f32, 0.0f32), col: Color::WHITE.into(), st: Vector4::new(1f32, 1f32, 0f32, 0f32) },
 				GlVert { pos: Vector3::new(0.5f32, -0.5f32, 0.0f32), col: Color::WHITE.into(), st: Vector4::new(1f32, 0f32, 0f32, 0f32) },
-				GlVert { pos: Vector3::new(-0.5f32, -0.5f32, 0.0f32), col: Color::WHITE.into(), st: Vector4::new(0f32, 0f32, 0f32, 0f32) },
+				GlVert { pos: Vector3::new(0.5f32, 0.5f32, 0.0f32), col: Color::WHITE.into(), st: Vector4::new(0f32, 0f32, 0f32, 0f32) },
 				GlVert { pos: Vector3::new(-0.5f32, 0.5f32, 0.0f32), col: Color::WHITE.into(), st: Vector4::new(0f32, 1f32, 0f32, 0f32) }];
 
 			let indexes = [0u32, 1, 3, 1, 2, 3];

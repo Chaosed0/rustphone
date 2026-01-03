@@ -98,7 +98,7 @@ fn main() {
 
         d.clear_background(Color::WHITE);
 		unsafe { raylib::ffi::rlEnableDepthTest() };
-		unsafe { raylib::ffi::rlDisableBackfaceCulling() };
+		//unsafe { raylib::ffi::rlDisableBackfaceCulling() };
 		unsafe { raylib::ffi::rlSetClipPlanes(1f64, 100000f64) };
 
 		d.draw_mode3D(cam, |mut d3d, cam|
@@ -106,7 +106,6 @@ fn main() {
 			let modelview: Matrix = unsafe { raylib::ffi::rlGetMatrixModelview().try_into().unwrap() };
 			let projection: Matrix = unsafe { raylib::ffi::rlGetMatrixProjection().try_into().unwrap() };
 			bsp_render.render(&textures, &shader, modelview * projection);
-			//d3d.draw_cube(Vector3::new(0f32, 0f32, 0f32), 1f32, 1f32, 1f32, Color::BROWN);
 		});
 
 		d.draw_fps(10, 10);
