@@ -63,15 +63,31 @@ fn main() {
 
 	rl.set_target_fps(60);
 
-	let mut cam = Camera3D::perspective(Vector3::zero(), Vector3::zero(), Vector3::up(), 90f32);
+	let mut cam = Camera3D::perspective(Vector3::new(0f32, 0f32, 3f32), Vector3::zero(), Vector3::up(), 60f32);
 	let mut angle = 0f32;
+
+	rl.disable_cursor();
+	rl.set_exit_key(None);
 
     while !rl.window_should_close() {
 		let delta = rl.get_frame_time();
 
+		/*
 		const DIST: f32 = 2f32;
-		cam.position = Vector3::new(DIST * angle.sin(), 2f32, DIST * angle.cos());
+		cam.position = Vector3::new(DIST * angle.sin(), 0f32, DIST * angle.cos());
 		angle += delta * PI * 0.5;
+		*/
+
+		if rl.is_key_pressed(KeyboardKey::KEY_ESCAPE) {
+			rl.enable_cursor();
+		}
+
+		if rl.is_cursor_hidden() {
+			rl.update_camera(&mut cam, CameraMode::CAMERA_FIRST_PERSON);
+		}
+		else if rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT) {
+			rl.disable_cursor();
+		}
 
         transport.poll_messages(message_handler);
         gns_global.poll_callbacks();
@@ -81,13 +97,16 @@ fn main() {
         let mut d = rl.begin_drawing(&thread);
 
         d.clear_background(Color::WHITE);
+		unsafe { raylib::ffi::rlEnableDepthTest() };
+		unsafe { raylib::ffi::rlDisableBackfaceCulling() };
+		unsafe { raylib::ffi::rlSetClipPlanes(1f64, 100000f64) };
 
 		d.draw_mode3D(cam, |mut d3d, cam|
 		{
 			let modelview: Matrix = unsafe { raylib::ffi::rlGetMatrixModelview().try_into().unwrap() };
 			let projection: Matrix = unsafe { raylib::ffi::rlGetMatrixProjection().try_into().unwrap() };
 			bsp_render.render(&textures, &shader, modelview * projection);
-			d3d.draw_cube(Vector3::new(0f32, 0f32, 0f32), 1f32, 1f32, 1f32, Color::BROWN);
+			//d3d.draw_cube(Vector3::new(0f32, 0f32, 0f32), 1f32, 1f32, 1f32, Color::BROWN);
 		});
 
 		d.draw_fps(10, 10);

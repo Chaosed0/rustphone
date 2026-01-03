@@ -6,6 +6,7 @@ use ::core::ffi::c_void;
 use ::core::num::NonZeroU32;
 use ::core::ptr::addr_of;
 use ::core::fmt::Debug;
+use std::fmt::Formatter;
 use std::mem::offset_of;
 
 pub struct BspRender
@@ -18,6 +19,7 @@ pub struct BspRender
 
 struct RenderData
 {
+	vao: NativeVertexArray,
 	vbo: NativeBuffer,
 	ibo: NativeBuffer,
 	cmds: Vec<DrawElementsIndirectCommand>,
@@ -29,6 +31,15 @@ struct GlVert
 	pos: Vector3,
 	col: Vector4,
 	st: Vector4,
+}
+
+impl Debug for GlVert
+{
+	fn fmt(&self, formatter: &mut Formatter<'_>) -> Result<(), std::fmt::Error>
+	{
+		formatter.write_fmt(format_args!("{:?}", self.pos)).unwrap();
+		return Ok(());
+	}
 }
 
 struct DrawElementsIndirectCommand
@@ -122,21 +133,26 @@ impl BspRender
 		unsafe
 		{
 			let verts_u8: &[u8] = std::slice::from_raw_parts(verts.as_ptr() as *const u8, verts.len() * size_of::<GlVert>());
-
-			let vbo = self.gl.create_buffer().unwrap();
-			self.gl.bind_buffer(ARRAY_BUFFER, Some(vbo));
-			//self.gl.object_label(BUFFER, vbo.0.get(), Some("VBO"));
-			self.gl.buffer_data_u8_slice(ARRAY_BUFFER, verts_u8, STATIC_DRAW);
-			self.gl.bind_buffer(ARRAY_BUFFER, None);
-
 			let indexes_u8: &[u8] = std::slice::from_raw_parts(indexes.as_ptr() as *const u8, indexes.len() * size_of::<u32>());
-			let ibo = self.gl.create_buffer().unwrap();
-			self.gl.bind_buffer(ELEMENT_ARRAY_BUFFER, Some(ibo));
-			//self.gl.object_label(BUFFER, ibo.0.get(), Some("IBO"));
-			self.gl.buffer_data_u8_slice(ELEMENT_ARRAY_BUFFER, indexes_u8, STATIC_DRAW);
-			self.gl.bind_buffer(ELEMENT_ARRAY_BUFFER, None);
 
-			self.data = Some(RenderData { vbo, ibo, cmds });
+			let vao = self.gl.create_vertex_array().unwrap();
+			let vbo = self.gl.create_buffer().unwrap();
+			let ibo = self.gl.create_buffer().unwrap();
+
+			self.gl.bind_vertex_array(Some(vao));
+			self.gl.bind_buffer(ARRAY_BUFFER, Some(vbo));
+			self.gl.buffer_data_u8_slice(ARRAY_BUFFER, verts_u8, STATIC_DRAW);
+			self.gl.bind_buffer(ELEMENT_ARRAY_BUFFER, Some(ibo));
+			self.gl.buffer_data_u8_slice(ELEMENT_ARRAY_BUFFER, indexes_u8, STATIC_DRAW);
+
+			self.gl.vertex_attrib_pointer_f32(0, 3, FLOAT, false, size_of::<GlVert>() as i32, offset_of!(GlVert, pos) as i32);
+			self.gl.vertex_attrib_pointer_f32(1, 4, FLOAT, false, size_of::<GlVert>() as i32, offset_of!(GlVert, col) as i32);
+			self.gl.vertex_attrib_pointer_f32(2, 4, FLOAT, false, size_of::<GlVert>() as i32, offset_of!(GlVert, st) as i32);
+			self.gl.enable_vertex_array_attrib(vao, 0);
+			self.gl.enable_vertex_array_attrib(vao, 1);
+			self.gl.enable_vertex_array_attrib(vao, 2);
+
+			self.data = Some(RenderData { vao, vbo, ibo, cmds });
 
 			let vertices =
 				[GlVert { pos: Vector3::new(0.5f32, 0.5f32, 0.0f32), col: Color::WHITE.into(), st: Vector4::new(1f32, 1f32, 0f32, 0f32) },
@@ -169,8 +185,8 @@ impl BspRender
 			self.data2 = Some(vao);
 		}
 
-		//println!("VERTS {:?}", verts);
-		//println!("ELEMS {:?}", indexes);
+		println!("VERTS {:?}", verts);
+		println!("ELEMS {:?}", indexes);
 	}
 
 	pub fn is_ready(&self) -> bool
@@ -190,25 +206,32 @@ impl BspRender
 
 			self.gl.use_program(Some(gl_shader));
 
-			let mat_f32 = std::slice::from_raw_parts(addr_of!(mvp) as *const f32, 16);
+			//let mat_f32 = std::slice::from_raw_parts(addr_of!(mvp) as *const f32, 16);
+			let mat_f32 =
+			[
+				mvp.m0, mvp.m1, mvp.m2, mvp.m3,
+				mvp.m4, mvp.m5, mvp.m6, mvp.m7,
+				mvp.m8, mvp.m9, mvp.m10, mvp.m11,
+				mvp.m12, mvp.m13, mvp.m14, mvp.m15,
+			];
 			let mvp_loc = self.gl.get_uniform_location(gl_shader, "mvp");
-			self.gl.uniform_matrix_4_f32_slice(mvp_loc.as_ref(), false, mat_f32);
+			self.gl.uniform_matrix_4_f32_slice(mvp_loc.as_ref(), false, &mat_f32);
 
-			self.gl.bind_buffer(ELEMENT_ARRAY_BUFFER, Some(data.ibo));
-			self.gl.bind_buffer(ARRAY_BUFFER, Some(data.vbo));
-			self.gl.vertex_attrib_pointer_f32(0, 3, FLOAT, false, size_of::<GlVert>() as i32, offset_of!(GlVert, pos) as i32);
-			self.gl.vertex_attrib_pointer_f32(1, 4, FLOAT, false, size_of::<GlVert>() as i32, offset_of!(GlVert, col) as i32);
-			self.gl.vertex_attrib_pointer_f32(2, 4, FLOAT, false, size_of::<GlVert>() as i32, offset_of!(GlVert, st) as i32);
+			self.gl.bind_vertex_array(Some(data.vao));
 
 			for (cmd, tex) in data.cmds.iter().zip(textures)
 			{
+				if cmd.count == 0 {
+					continue
+				}
+
 				let gl_tex = NonZeroU32::new(tex.id)
 					.map(NativeTexture)
 					.expect("Unable to create Texture object");
 
 				self.gl.active_texture(0);
 				self.gl.bind_texture(TEXTURE_2D, Some(gl_tex));
-				self.gl.draw_elements_instanced_base_vertex_base_instance(TRIANGLES, cmd.count, UNSIGNED_INT, cmd.firstIndex * size_of::<u32>() as i32, cmd.instanceCount, cmd.baseVertex, cmd.baseInstance);
+				self.gl.draw_elements(TRIANGLES, cmd.count, UNSIGNED_INT, cmd.firstIndex);
 			}
 
 			self.gl.bind_texture(TEXTURE_2D, None);
