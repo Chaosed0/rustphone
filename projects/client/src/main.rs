@@ -15,13 +15,17 @@ use raylib::prelude::*;
 use gns::GnsGlobal;
 use std::net::Ipv4Addr;
 use shared::Message;
+use std::error::Error;
+use std::sync::Arc;
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>>
+{
     // Initial the global networking state. Note that this instance must be unique per-process.
     let gns_global = GnsGlobal::get().expect("no global networking state");
 
     let (mut rl, thread) = raylib::init()
-        .size(640, 480)
+        .size(1920, 1080)
         .title("Hello, World")
         .build();
 
@@ -31,46 +35,48 @@ fn main() {
 	bsp_render.build_buffers(&bsp);
 
 	let exe_dir_path = std::env::current_exe().expect("no exe path").parent().expect("PARENT").to_owned();
-	let vpath = exe_dir_path.join("assets/shaders/vert.glsl").to_str().expect("No vpath").to_owned();
-	let fpath = exe_dir_path.join("assets/shaders/frag.glsl").to_str().expect("No fpath").to_owned();
-	let shader = rl.load_shader(&thread, Some(vpath.as_str()), Some(fpath.as_str()));
+	let default_vs = exe_dir_path.join("assets/shaders/default.vs").to_str().expect("No vpath").to_owned();
+	let default_fs = exe_dir_path.join("assets/shaders/default.fs").to_str().expect("No fpath").to_owned();
+	let default_shader = rl.load_shader(&thread, Some(default_vs.as_str()), Some(default_fs.as_str()));
+	let cutout_fs = exe_dir_path.join("assets/shaders/cutout.fs").to_str().expect("No fpath").to_owned();
+	let cutout_shader = rl.load_shader(&thread, Some(default_vs.as_str()), Some(cutout_fs.as_str()));
 
-	let textures = bsp.textures.iter()
-		.map(|mip_tex| {
-			if mip_tex.width == 0 || mip_tex.height == 0 { return generate_missing_texture(); }
-			let image = image_from_pixels(mip_tex);
+	assert!(default_shader.is_shader_valid() && cutout_shader.is_shader_valid(), "Error compiling shaders");
+
+	let textures = {
+		let mut image_gen_set = tokio::task::JoinSet::new();
+		for (i, texture) in bsp.textures.iter().enumerate()
+		{
+			let pixels = texture.pixels.clone();
+			let width = texture.width;
+			let height = texture.height;
+
+			image_gen_set.spawn(async move { (i, gen_pixels(pixels, width, height)) });
+		}
+
+		let mut textures = std::iter::repeat_with(|| Option::<Texture2D>::None).take(bsp.textures.len()).collect::<Vec<_>>();
+		while let Some(tup) = image_gen_set.join_next().await
+		{
+			let (i, pixels) = tup.unwrap();
+			let texture = &bsp.textures[i];
+			let image = image_from_pixels(pixels, texture.width, texture.height);
 			let tex = rl.load_texture_from_image(&thread, &image)
 				.unwrap_or_else(|err| panic!("Could not generate texture from image: {err}"));
 
 			tex.set_texture_wrap(&thread, TextureWrap::TEXTURE_WRAP_REPEAT);
-			return tex;
-		})
-		.collect::<Vec<Texture2D>>();
+			textures[i] = Some(tex);
+		}
+
+		textures.into_iter().map(|t| t.unwrap()).collect::<Vec<Texture2D>>()
+	};
 
 	let mut time = 0f32;
-
-	/*
-	for (i, surf) in bsp.surfs.iter().enumerate()
-	{
-		println!("SURF {i}: {:?} {:?}", surf.first_edge, surf.num_edges);
-
-		for e in surf.first_edge..(surf.first_edge + surf.num_edges as i32)
-		{
-			let surf_edge = bsp.surf_edges[e as usize];
-			let edge = &bsp.edges[surf_edge.abs() as usize];
-			let (v0, v1) = if surf_edge >= 0 { (edge.v0, edge.v1) } else { (edge.v1, edge.v0) };
-
-			println!("   {surf_edge} {v0}->{v1} {:?}->{:?}", bsp.verts[v0 as usize], bsp.verts[v1 as usize]);
-		}
-	}
-	*/
 
 	println!("ENTITIES: {:?}", bsp.entities);
 
 	rl.set_target_fps(60);
 
-	let mut cam = Camera3D::perspective(Vector3::new(0f32, 0f32, 3f32), Vector3::zero(), Vector3::up(), 60f32);
-	let mut angle = 0f32;
+	let mut cam = Camera3D::perspective(Vector3::zero(), Vector3::forward(), Vector3::up(), 60f32);
 
 	rl.disable_cursor();
 	rl.set_exit_key(None);
@@ -111,46 +117,38 @@ fn main() {
 		{
 			let modelview: Matrix = unsafe { raylib::ffi::rlGetMatrixModelview().try_into().unwrap() };
 			let projection: Matrix = unsafe { raylib::ffi::rlGetMatrixProjection().try_into().unwrap() };
-			bsp_render.render(&textures, &shader, modelview * projection, time);
+			bsp_render.render(&textures, &bsp, &default_shader, &cutout_shader, modelview * projection, time);
 		});
 
 		d.draw_fps(10, 10);
     }
+
+	return Ok(());
 }
 
-fn generate_missing_texture() -> Texture2D
+fn gen_pixels(pixels: Vec<u8>, width: u32, height: u32) -> Vec<u8>
 {
-	let mut colors = [Color::MAGENTA, Color::MAGENTA, Color::MAGENTA, Color::MAGENTA];
-
-	unsafe {
-		let image = raylib::ffi::Image {
-			data: colors.as_mut_ptr() as *mut c_void,
-			width: 2,
-			height: 2,
-			format: PixelFormat::PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 as i32,
-			mipmaps: 1
-		};
-
-		let tex = raylib::ffi::LoadTextureFromImage(image);
-		raylib::ffi::SetTextureWrap(tex, TextureWrap::TEXTURE_WRAP_REPEAT as i32);
-		return Texture2D::from_raw(tex);
+	if width == 0 || height == 0 {
+		return [255, 0, 255, 255, 255, 0, 255, 255, 255, 0, 255, 255, 255, 0, 255, 255].into();
 	}
-}
 
-fn image_from_pixels(tex: &MipTex) -> Image
-{
-	let pixels = tex.pixels.iter().flat_map(|b| {
+	let pixels_u8 = pixels.iter().flat_map(|b| {
 		let col = PALETTE[*b as usize].to_le_bytes();
-		return [col[2], col[1], col[0], 255u8];
+		return [col[2], col[1], col[0], 255];
 	}).collect::<Vec<u8>>();
 
+	return pixels_u8;
+}
+
+fn image_from_pixels(pixels: Vec<u8>, width: u32, height: u32) -> Image
+{
 	unsafe {
 		let mut pixels = std::mem::ManuallyDrop::new(pixels);
 
 		return Image::from_raw(raylib::ffi::Image {
 			data: pixels.as_mut_ptr() as *mut c_void,
-			width: tex.width as i32,
-			height: tex.height as i32,
+			width: if width == 0 { 2 } else { width as i32 },
+			height: if height == 0 { 2 } else { height as i32 },
 			format: PixelFormat::PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 as i32,
 			mipmaps: 1
 		});
@@ -159,7 +157,7 @@ fn image_from_pixels(tex: &MipTex) -> Image
 
 fn update_camera(rl: &mut RaylibHandle, camera : &mut Camera)
 {
-	const CAMERA_MOVE_SPEED: f32 = 96f32;
+	const CAMERA_MOVE_SPEED: f32 = 256f32;
 	const CAMERA_ROTATION_SPEED: f32 = 0.1f32;
 
     let mouse_delta = rl.get_mouse_delta();

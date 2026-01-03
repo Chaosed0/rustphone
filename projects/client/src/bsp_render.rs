@@ -1,6 +1,6 @@
 use raylib::prelude::*;
 use raylib::core::shaders::Shader;
-use crate::bsp::Bsp;
+use crate::bsp::{self, Bsp};
 use glow::*;
 use ::core::ffi::c_void;
 use ::core::num::NonZeroU32;
@@ -135,8 +135,8 @@ impl BspRender
 			for e in 2..surf.num_edges
 			{
 				indexes[cmd.firstIndex       as usize] = vbo_firstvert;
-				indexes[(cmd.firstIndex + 1) as usize] = vbo_firstvert + e as u32 - 1;
-				indexes[(cmd.firstIndex + 2) as usize] = vbo_firstvert + e as u32;
+				indexes[(cmd.firstIndex + 1) as usize] = vbo_firstvert + e as u32;
+				indexes[(cmd.firstIndex + 2) as usize] = vbo_firstvert + e as u32 - 1;
 
 				//println!(" surf {:?}-{:?}: {:?} | {:?} {:?} {:?}", s, e, cmd.firstIndex, vbo_firstvert, vbo_firstvert + e as u32 - 1, vbo_firstvert + e as u32);
 
@@ -220,17 +220,19 @@ impl BspRender
 		return match self.data { Some(_) => true, None => false };
 	}
 
-	pub fn render(&self, textures: &Vec<Texture2D>, shader: &Shader, mvp: Matrix, time: f32)
+	pub fn render(&self, textures: &Vec<Texture2D>, bsp: &Bsp, default_shader: &Shader, cutout_shader: &Shader, mvp: Matrix, time: f32)
 	{
 		let data = match &self.data { Some(v) => v, None => return };
 
 		unsafe
 		{
-			let gl_shader = NonZeroU32::new(shader.id)
+			let gl_default_shader = NonZeroU32::new(default_shader.id)
 				.map(NativeProgram)
 				.expect("Unable to create Shader object");
 
-			self.gl.use_program(Some(gl_shader));
+			let gl_cutout_shader = NonZeroU32::new(cutout_shader.id)
+				.map(NativeProgram)
+				.expect("Unable to create Shader object");
 
 			//let mat_f32 = std::slice::from_raw_parts(addr_of!(mvp) as *const f32, 16);
 			let mat_f32 =
@@ -240,15 +242,28 @@ impl BspRender
 				mvp.m8, mvp.m9, mvp.m10, mvp.m11,
 				mvp.m12, mvp.m13, mvp.m14, mvp.m15,
 			];
-			let mvp_loc = self.gl.get_uniform_location(gl_shader, "mvp");
-			self.gl.uniform_matrix_4_f32_slice(mvp_loc.as_ref(), false, &mat_f32);
+
+			let mvp_d_loc = self.gl.get_uniform_location(gl_default_shader, "mvp");
+			let mvp_c_loc = self.gl.get_uniform_location(gl_cutout_shader, "mvp");
 
 			self.gl.bind_vertex_array(Some(data.vao));
 
-			for (cmd, tex) in data.cmds.iter().zip(textures)
+			for (cmd, tex, bsptex) in itertools::izip!(&data.cmds, textures, &bsp.textures)
 			{
 				if cmd.count == 0 {
 					continue
+				}
+
+				match bsptex.tex_type
+				{
+					bsp::TextureType::Cutout => {
+						self.gl.use_program(Some(gl_cutout_shader));
+						self.gl.uniform_matrix_4_f32_slice(mvp_c_loc.as_ref(), false, &mat_f32);
+					}
+					_ => {
+						self.gl.use_program(Some(gl_default_shader));
+						self.gl.uniform_matrix_4_f32_slice(mvp_d_loc.as_ref(), false, &mat_f32);
+					}
 				}
 
 				let gl_tex = NonZeroU32::new(tex.id)

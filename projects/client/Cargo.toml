@@ -8,5 +8,7 @@ byteorder = "1.5.0"
 game-networking-sockets = "0.1.2"
 gl_loader = "0.1.2"
 glow = "0.16.0"
+itertools = "0.14.0"
 raylib = "5.5.1"
 shared = { version = "0.1.0", path = "../shared" }
+tokio = { version = "1.49.0", features = ["full"] }
