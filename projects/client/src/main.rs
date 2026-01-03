@@ -69,7 +69,7 @@ fn main() {
     while !rl.window_should_close() {
 		let delta = rl.get_frame_time();
 
-		const DIST: f32 = 4f32;
+		const DIST: f32 = 2f32;
 		cam.position = Vector3::new(DIST * angle.sin(), 2f32, DIST * angle.cos());
 		angle += delta * PI * 0.5;
 
@@ -84,10 +84,10 @@ fn main() {
 
 		d.draw_mode3D(cam, |mut d3d, cam|
 		{
-			d3d.draw_cube(Vector3::new(0f32, 0f32, 0f32), 1f32, 1f32, 1f32, Color::BROWN);
 			let modelview: Matrix = unsafe { raylib::ffi::rlGetMatrixModelview().try_into().unwrap() };
 			let projection: Matrix = unsafe { raylib::ffi::rlGetMatrixProjection().try_into().unwrap() };
 			bsp_render.render(&textures, &shader, modelview * projection);
+			d3d.draw_cube(Vector3::new(0f32, 0f32, 0f32), 1f32, 1f32, 1f32, Color::BROWN);
 		});
 
 		d.draw_fps(10, 10);

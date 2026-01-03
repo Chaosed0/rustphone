@@ -139,10 +139,10 @@ impl BspRender
 			self.data = Some(RenderData { vbo, ibo, cmds });
 
 			let vertices =
-				[GlVert { pos: Vector3::new(0.5f32, 0.5f32, 0.0f32), col: Color::RED.into(), st: Vector4::new(0f32, 0f32, 0f32, 0f32) },
-				GlVert { pos: Vector3::new(0.5f32, -0.5f32, 0.0f32), col: Color::GREEN.into(), st: Vector4::new(0f32, 0f32, 0f32, 0f32) },
-				GlVert { pos: Vector3::new(-0.5f32, -0.5f32, 0.0f32), col: Color::BLUE.into(), st: Vector4::new(0f32, 0f32, 0f32, 0f32) },
-				GlVert { pos: Vector3::new(-0.5f32, 0.5f32, 0.0f32), col: Color::MAGENTA.into(), st: Vector4::new(0f32, 0f32, 0f32, 0f32) }];
+				[GlVert { pos: Vector3::new(0.5f32, 0.5f32, 0.0f32), col: Color::WHITE.into(), st: Vector4::new(1f32, 1f32, 0f32, 0f32) },
+				GlVert { pos: Vector3::new(0.5f32, -0.5f32, 0.0f32), col: Color::WHITE.into(), st: Vector4::new(1f32, 0f32, 0f32, 0f32) },
+				GlVert { pos: Vector3::new(-0.5f32, -0.5f32, 0.0f32), col: Color::WHITE.into(), st: Vector4::new(0f32, 0f32, 0f32, 0f32) },
+				GlVert { pos: Vector3::new(-0.5f32, 0.5f32, 0.0f32), col: Color::WHITE.into(), st: Vector4::new(0f32, 1f32, 0f32, 0f32) }];
 
 			let indexes = [0u32, 1, 3, 1, 2, 3];
 
@@ -213,7 +213,12 @@ impl BspRender
 
 			self.gl.bind_texture(TEXTURE_2D, None);
 
-			//self.gl.disable(CULL_FACE);
+			let gl_tex = NonZeroU32::new(textures[0].id)
+				.map(NativeTexture)
+				.expect("Unable to create Texture object");
+
+			self.gl.active_texture(0);
+			self.gl.bind_texture(TEXTURE_2D, Some(gl_tex));
 
 			self.gl.bind_vertex_array(Some(self.data2.unwrap()));
 			self.gl.draw_elements(TRIANGLES, 6, UNSIGNED_INT, 0);
