@@ -26,7 +26,7 @@ fn main() {
         .build();
 
     let transport = Transport::new(gns_global.clone(), Ipv4Addr::LOCALHOST.into(), 27821).expect("connection failed");
-	let bsp = load_bsp("assets/box.bsp");
+	let bsp = load_bsp("assets/qbj3_chaosed0.bsp");
 	let mut bsp_render = BspRender::new();
 	bsp_render.build_buffers(&bsp);
 
@@ -37,17 +37,22 @@ fn main() {
 
 	let textures = bsp.textures.iter()
 		.map(|mip_tex| {
+			if mip_tex.width == 0 || mip_tex.height == 0 { return generate_missing_texture(); }
 			let image = image_from_pixels(mip_tex);
-			return rl.load_texture_from_image(&thread, &image)
+			let tex = rl.load_texture_from_image(&thread, &image)
 				.unwrap_or_else(|err| panic!("Could not generate texture from image: {err}"));
+
+			tex.set_texture_wrap(&thread, TextureWrap::TEXTURE_WRAP_REPEAT);
+			return tex;
 		})
 		.collect::<Vec<Texture2D>>();
 
 	let mut time = 0f32;
 
+	/*
 	for (i, surf) in bsp.surfs.iter().enumerate()
 	{
-		//println!("SURF {i}: {:?} {:?}", surf.first_edge, surf.num_edges);
+		println!("SURF {i}: {:?} {:?}", surf.first_edge, surf.num_edges);
 
 		for e in surf.first_edge..(surf.first_edge + surf.num_edges as i32)
 		{
@@ -55,9 +60,10 @@ fn main() {
 			let edge = &bsp.edges[surf_edge.abs() as usize];
 			let (v0, v1) = if surf_edge >= 0 { (edge.v0, edge.v1) } else { (edge.v1, edge.v0) };
 
-			//println!("   {surf_edge} {v0}->{v1} {:?}->{:?}", bsp.verts[v0 as usize], bsp.verts[v1 as usize]);
+			println!("   {surf_edge} {v0}->{v1} {:?}->{:?}", bsp.verts[v0 as usize], bsp.verts[v1 as usize]);
 		}
 	}
+	*/
 
 	println!("ENTITIES: {:?}", bsp.entities);
 
@@ -83,7 +89,7 @@ fn main() {
 		}
 
 		if rl.is_cursor_hidden() {
-			rl.update_camera(&mut cam, CameraMode::CAMERA_FIRST_PERSON);
+			update_camera(&mut rl, &mut cam);
 		}
 		else if rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT) {
 			rl.disable_cursor();
@@ -105,11 +111,30 @@ fn main() {
 		{
 			let modelview: Matrix = unsafe { raylib::ffi::rlGetMatrixModelview().try_into().unwrap() };
 			let projection: Matrix = unsafe { raylib::ffi::rlGetMatrixProjection().try_into().unwrap() };
-			bsp_render.render(&textures, &shader, modelview * projection);
+			bsp_render.render(&textures, &shader, modelview * projection, time);
 		});
 
 		d.draw_fps(10, 10);
     }
+}
+
+fn generate_missing_texture() -> Texture2D
+{
+	let mut colors = [Color::MAGENTA, Color::MAGENTA, Color::MAGENTA, Color::MAGENTA];
+
+	unsafe {
+		let image = raylib::ffi::Image {
+			data: colors.as_mut_ptr() as *mut c_void,
+			width: 2,
+			height: 2,
+			format: PixelFormat::PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 as i32,
+			mipmaps: 1
+		};
+
+		let tex = raylib::ffi::LoadTextureFromImage(image);
+		raylib::ffi::SetTextureWrap(tex, TextureWrap::TEXTURE_WRAP_REPEAT as i32);
+		return Texture2D::from_raw(tex);
+	}
 }
 
 fn image_from_pixels(tex: &MipTex) -> Image
@@ -130,6 +155,40 @@ fn image_from_pixels(tex: &MipTex) -> Image
 			mipmaps: 1
 		});
 	}
+}
+
+fn update_camera(rl: &mut RaylibHandle, camera : &mut Camera)
+{
+	const CAMERA_MOVE_SPEED: f32 = 96f32;
+	const CAMERA_ROTATION_SPEED: f32 = 0.1f32;
+
+    let mouse_delta = rl.get_mouse_delta();
+	let delta = rl.get_frame_time();
+
+    // Camera speeds based on frame time
+    let mut speed = CAMERA_MOVE_SPEED * delta;
+    let rot_speed = CAMERA_ROTATION_SPEED * delta;
+
+	let mut forward = (camera.target - camera.position).normalized();
+	let up = camera.up;
+	let right = forward.cross(up);
+
+	let yaw = Quaternion::from_axis_angle(up, -mouse_delta.x * rot_speed);
+	let pitch = Quaternion::from_axis_angle(right, -mouse_delta.y * rot_speed);
+
+	forward = forward.rotate_by(yaw).rotate_by(pitch);
+
+	if rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT) { speed *= 3f32; }
+	if rl.is_key_down(KeyboardKey::KEY_W) { camera.position += forward * speed; }
+	if rl.is_key_down(KeyboardKey::KEY_A) { camera.position -= right * speed; }
+	if rl.is_key_down(KeyboardKey::KEY_S) { camera.position -= forward * speed; }
+	if rl.is_key_down(KeyboardKey::KEY_D) { camera.position += right * speed; }
+	if rl.is_key_down(KeyboardKey::KEY_SPACE) { camera.position += up * speed; }
+	if rl.is_key_down(KeyboardKey::KEY_Q) { camera.position += up * speed; }
+	if rl.is_key_down(KeyboardKey::KEY_LEFT_CONTROL) { camera.position += up * speed; }
+	if rl.is_key_down(KeyboardKey::KEY_E) { camera.position -= up * speed; }
+
+	camera.target = camera.position + forward;
 }
 
 fn message_handler(_msg: Message) {

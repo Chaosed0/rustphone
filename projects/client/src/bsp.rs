@@ -1,8 +1,10 @@
 use raylib::core::math::*;
+use std::any::Any;
 use std::fs::File;
 use std::path::Path;
 use std::io::prelude::*;
 use std::io::BufReader;
+use std::collections::HashSet;
 
 const BSP2_VER: i32 = (('B' as i32) << 0) | (('S' as i32) << 8) | (('P' as i32) << 16) | (('2' as i32) << 24);
 const LIT_VER: i32 = (('Q' as i32) << 0) | (('L' as i32) << 8) | (('I' as i32) << 16) | (('T' as i32) << 24);
@@ -43,7 +45,9 @@ pub struct Bsp
 	pub lit_data: Vec<u8>,
 	pub vis_data: Vec<u8>,
 	pub entities: String,
-	pub submodels: Vec<Model>
+	pub submodels: Vec<Model>,
+	pub texofs: [usize; 7], // Offset into used_textures for each texture type
+	pub used_textures: Vec<i32>,
 }
 
 #[derive(Default)]
@@ -93,15 +97,16 @@ struct Model
 	num_faces: i32
 }
 
+#[derive(Clone, Copy)]
 pub enum TextureType
 {
-	Default,
-	Cutout,
-	Sky,
-	Lava,
-	Slime,
-	Tele,
-	Water
+	Default = 0,
+	Cutout = 1,
+	Sky = 2,
+	Lava = 3,
+	Slime = 4,
+	Tele = 5,
+	Water = 6,
 }
 
 pub struct Plane
@@ -266,11 +271,11 @@ pub fn load_bsp(filename: &str) -> Bsp
 	let vertexes = read_verts(header.vertices, &mut reader, &mut buf);
 	let edges = read_edges(header.edges, &mut reader, &mut buf);
 	let surf_edges = read_surf_edges(header.surf_edges, &mut reader, &mut buf);
-	let mips = read_mips(header.mip_tex, &mut reader, &mut buf);
+	let textures = read_textures(header.mip_tex, &mut reader, &mut buf);
 	let lit_data = read_lighting(header.lightmaps, &mut reader, &mut buf, &path);
 	let planes = read_planes(header.planes, &mut reader, &mut buf);
-	let tex_infos= read_texinfo(header.tex_info, &mut reader, &mut buf, &mips);
-	let surfaces = read_faces(header.faces, &mut reader, &mut buf, &tex_infos, &mips, &vertexes, &surf_edges, &edges);
+	let tex_infos= read_texinfo(header.tex_info, &mut reader, &mut buf, &textures);
+	let surfaces = read_faces(header.faces, &mut reader, &mut buf, &tex_infos, &textures, &vertexes, &surf_edges, &edges);
 	let mark_surfaces = read_marksurfaces(header.mark_surfaces, &mut reader, &mut buf, surfaces.len() as i32);
 	let vis_data = read_vis(header.visilist, &mut reader);
 	let leafs = read_leafs(header.leaves, &mut reader, &mut buf);
@@ -278,9 +283,10 @@ pub fn load_bsp(filename: &str) -> Bsp
 	let clip_nodes = read_clip_nodes(header.clip_nodes, &mut reader, &mut buf);
 	let entities = read_entities(header.entities, &mut reader);
 	let submodels = read_submodels(header.models, &mut reader, &mut buf);
+	let (texofs, used_textures) = build_used_textures(&surfaces, &textures, &tex_infos);
 
 	return Bsp {
-		textures: mips,
+		textures,
 		planes,
 		leafs,
 		verts: vertexes,
@@ -294,7 +300,9 @@ pub fn load_bsp(filename: &str) -> Bsp
 		entities,
 		lit_data,
 		vis_data,
-		submodels
+		submodels,
+		texofs,
+		used_textures,
 	};
 }
 
@@ -348,7 +356,7 @@ fn read_surf_edges(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut V
 	return surf_edges;
 }
 
-fn read_mips(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<MipTex>
+fn read_textures(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<MipTex>
 {
 	if header.size == 0
 	{
@@ -374,6 +382,8 @@ fn read_mips(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>
 	for data_offset in dataofs
 	{
 		if data_offset < 0 {
+			// Still must add a texture, this indicates the missing texture
+			mip_texs.push(MipTex { name: "MISSING".into(), width: 0, height: 0, offset1: 0, offset2: 0, offset4: 0, offset8: 0, tex_type: TextureType::Default, pixels: vec![0;0]});
 			continue;
 		}
 
@@ -486,18 +496,12 @@ fn read_texinfo(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<
 		let z1 = read_f32(reader, buf);
 		let w1 = read_f32(reader, buf);
 
-		let mut mip_tex = read_i32(reader, buf);
+		let mip_tex = read_i32(reader, buf);
 		let mut flags = read_i32(reader, buf);
 
 		if mip_tex as usize >= texs.len() || texs[mip_tex as usize].width == 0 || texs[mip_tex as usize].height == 0
 		{
-			if flags & TEXTURE_SPECIAL > 0 {
-				mip_tex = (texs.len() - 1) as i32;
-			}
-			else {
-				mip_tex = (texs.len() - 2) as i32;
-			}
-
+			println!("MISSING TEXTURE: {:?}", mip_tex as usize);
 			flags = flags | TEXTURE_MISSING;
 			missing += 1;
 		}
@@ -818,6 +822,47 @@ fn read_submodels(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Ve
 	}
 
 	return nodes;
+}
+
+fn build_used_textures(surfs: &Vec<Surface>, textures: &Vec<MipTex>, tex_infos: &Vec<TexInfo>) -> ([usize; 7], Vec<i32>)
+{
+	let mut used_set = HashSet::<i32>::new();
+	let mut texofs = [0usize; 7];
+
+	for surf in surfs
+	{
+		let tex_info = &tex_infos[surf.tex_info as usize];
+		let tex = &textures[tex_info.tex_num as usize];
+		if used_set.insert(tex_info.tex_num)
+		{
+			texofs[tex.tex_type as usize] += 1;
+			println!("Haven't seen {:?} before, adding 1 to {:?}", tex.name, tex.tex_type as i32);
+		}
+	}
+
+	let mut sum = 0;
+	for i in 0..7
+	{
+		let ofs = texofs[i];
+		texofs[i] = sum;
+		sum += ofs;
+	}
+
+	let mut used_textures = vec![0i32; sum as usize];
+	let mut cur_ofs = texofs.clone();
+
+	for (i, tex) in textures.iter().enumerate()
+	{
+		let idx = i as i32;
+		if used_set.contains(&idx)
+		{
+			println!("{:?} {:?} {:?}", used_textures.len(), cur_ofs.len(), tex.tex_type as usize);
+			used_textures[cur_ofs[tex.tex_type as usize]] = idx;
+			cur_ofs[tex.tex_type as usize] += 1;
+		}
+	}
+
+	return (texofs, used_textures);
 }
 
 fn texture_type_from_name(name: &String) -> TextureType

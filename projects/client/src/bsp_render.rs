@@ -23,6 +23,7 @@ struct RenderData
 	vbo: NativeBuffer,
 	ibo: NativeBuffer,
 	cmds: Vec<DrawElementsIndirectCommand>,
+	cmd_count: i32,
 }
 
 #[repr(C)]
@@ -72,27 +73,35 @@ impl BspRender
 		let mut indexes = vec![0u32; (numtris * 3) as usize];
 		let mut cmds = Vec::<DrawElementsIndirectCommand>::new();
 
-		for _ in &bsp.textures
+		for tex in &bsp.textures
 		{
+			//println!("TEX-CMD {:?}", tex.name);
 			cmds.push(DrawElementsIndirectCommand { count: 0, instanceCount: 1, firstIndex: 0, baseVertex: 0, baseInstance: 0 })
 		}
 
 		for surf in &bsp.surfs
 		{
 			let tex_info = &bsp.tex_infos[surf.tex_info as usize];
-			cmds[tex_info.tex_num as usize].count += ((surf.num_edges.max(2) - 2) * 3) as i32;
+			let tex_num = tex_info.tex_num as usize;
+			let vcount =  ((surf.num_edges.max(2) - 2) * 3) as i32;
+			cmds[tex_num].count += vcount;
+			//println!("SURF has {:?} {:?} {:?}", tex_num, vcount, cmds[tex_num].count);
 		}
 
 		let mut sum = 0;
 		for cmd in &mut cmds
 		{
 			cmd.firstIndex = sum;
+			//println!("CMD has {:?} {:?}", cmd.firstIndex, cmd.count);
 			sum += cmd.count;
 		}
 
 		for surf in &bsp.surfs
 		{
 			surf_vbo_map.push(verts.len());
+
+			//println!("SURF: {:?} {:?}", surf.first_edge, surf.num_edges);
+			//print!("   ");
 
 			for e in surf.first_edge..(surf.first_edge + surf.num_edges as i32)
 			{
@@ -106,19 +115,30 @@ impl BspRender
 				let t = (vec.dot(Vector3::new(tex_info.vec1.x, tex_info.vec1.y, tex_info.vec1.z)) + tex_info.vec1.w) / texture.height as f32;
 
 				verts.push(GlVert { pos: vec, col: Color::WHITE.into(), st: Vector4::new(s, t, 0f32, 0f32) });
+
+				/*
+				print!("{:?} ({:?},{:?},{:?})", edge_index, vec.x, vec.y, vec.z);
+				if e != surf.first_edge + surf.num_edges as i32 - 1 {
+					print!("->");
+				}
+				*/
 			}
+
+			//println!("");
 		}
 
-		for (i, surf) in bsp.surfs.iter().enumerate()
+		for (s, surf) in bsp.surfs.iter().enumerate()
 		{
-			let vbo_firstvert = surf_vbo_map[i] as u32;
+			let vbo_firstvert = surf_vbo_map[s] as u32;
 			let tex_info = &bsp.tex_infos[surf.tex_info as usize];
 			let cmd = &mut cmds[tex_info.tex_num as usize];
-			for i in 2..surf.num_edges
+			for e in 2..surf.num_edges
 			{
 				indexes[cmd.firstIndex       as usize] = vbo_firstvert;
-				indexes[(cmd.firstIndex + 1) as usize] = vbo_firstvert + i as u32;
-				indexes[(cmd.firstIndex + 2) as usize] = vbo_firstvert + i as u32 - 1;
+				indexes[(cmd.firstIndex + 1) as usize] = vbo_firstvert + e as u32 - 1;
+				indexes[(cmd.firstIndex + 2) as usize] = vbo_firstvert + e as u32;
+
+				//println!(" surf {:?}-{:?}: {:?} | {:?} {:?} {:?}", s, e, cmd.firstIndex, vbo_firstvert, vbo_firstvert + e as u32 - 1, vbo_firstvert + e as u32);
 
 				cmd.firstIndex += 3;
 			}
@@ -158,7 +178,7 @@ impl BspRender
 			self.gl.enable_vertex_array_attrib(vao, 1);
 			self.gl.enable_vertex_array_attrib(vao, 2);
 
-			self.data = Some(RenderData { vao, vbo, ibo, cmds });
+			self.data = Some(RenderData { vao, vbo, ibo, cmds, cmd_count: sum });
 
 			let vertices =
 				[GlVert { pos: Vector3::new(-0.5f32, -0.5f32, 0.0f32), col: Color::WHITE.into(), st: Vector4::new(1f32, 1f32, 0f32, 0f32) },
@@ -191,8 +211,8 @@ impl BspRender
 			self.data2 = Some(vao);
 		}
 
-		println!("VERTS {:?}", verts);
-		println!("ELEMS {:?}", indexes);
+		//println!("VERTS {:?}", verts);
+		//println!("ELEMS {:?}", indexes);
 	}
 
 	pub fn is_ready(&self) -> bool
@@ -200,7 +220,7 @@ impl BspRender
 		return match self.data { Some(_) => true, None => false };
 	}
 
-	pub fn render(&self, textures: &Vec<Texture2D>, shader: &Shader, mvp: Matrix)
+	pub fn render(&self, textures: &Vec<Texture2D>, shader: &Shader, mvp: Matrix, time: f32)
 	{
 		let data = match &self.data { Some(v) => v, None => return };
 
@@ -237,7 +257,7 @@ impl BspRender
 
 				self.gl.active_texture(0);
 				self.gl.bind_texture(TEXTURE_2D, Some(gl_tex));
-				self.gl.draw_elements(TRIANGLES, cmd.count, UNSIGNED_INT, cmd.firstIndex);
+				self.gl.draw_elements(TRIANGLES, cmd.count, UNSIGNED_INT, cmd.firstIndex * size_of::<u32>() as i32);
 			}
 
 			self.gl.bind_texture(TEXTURE_2D, None);
