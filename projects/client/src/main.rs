@@ -10,7 +10,7 @@ use bsp_render::*;
 mod palette;
 use palette::PALETTE;
 
-use std::ffi::c_void;
+use std::{f32::consts::PI, ffi::c_void};
 use raylib::prelude::*;
 use gns::GnsGlobal;
 use std::net::Ipv4Addr;
@@ -63,19 +63,32 @@ fn main() {
 
 	rl.set_target_fps(60);
 
+	let mut cam = Camera3D::perspective(Vector3::zero(), Vector3::zero(), Vector3::up(), 90f32);
+	let mut angle = 0f32;
+
     while !rl.window_should_close() {
-		let mvp = rl.get_matrix_modelview() * rl.get_matrix_projection();
+		let delta = rl.get_frame_time();
+
+		const DIST: f32 = 4f32;
+		cam.position = Vector3::new(DIST * angle.sin(), 2f32, DIST * angle.cos());
+		angle += delta * PI * 0.5;
 
         transport.poll_messages(message_handler);
         gns_global.poll_callbacks();
 
-		time += rl.get_frame_time();
+		time += delta;
 
         let mut d = rl.begin_drawing(&thread);
 
         d.clear_background(Color::WHITE);
 
-		bsp_render.render(&textures, &shader, mvp);
+		d.draw_mode3D(cam, |mut d3d, cam|
+		{
+			d3d.draw_cube(Vector3::new(0f32, 0f32, 0f32), 1f32, 1f32, 1f32, Color::BROWN);
+			let modelview: Matrix = unsafe { raylib::ffi::rlGetMatrixModelview().try_into().unwrap() };
+			let projection: Matrix = unsafe { raylib::ffi::rlGetMatrixProjection().try_into().unwrap() };
+			bsp_render.render(&textures, &shader, modelview * projection);
+		});
 
 		d.draw_fps(10, 10);
     }
