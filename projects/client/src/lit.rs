@@ -76,17 +76,16 @@ pub fn pack_lightmaps(bsp: &Bsp) -> LightmapData
 		if surf.lightofs == -1 { continue; }
 
 		let width = surf.extent_x / 16 + 1;
-		let height = (surf.extent_y / 16 + 1) * get_num_taps(&surf);
+		let height = (surf.extent_y / 16 + 1);
 		let samples = width as usize * height as usize;
 		let lightofs = (surf.lightofs * 3) as usize;
 		let slice_end = lightofs + samples * 3;
 
-		println!("Packing surf: {width} {height} {:?} {samples} {lightofs}. ", get_num_taps(&surf));
+		//println!("Packing surf: {width} {height} {:?} {samples} {lightofs}. ", get_num_taps(&surf));
 
 		let lmtex = SurfTex { width: width as u32, height: height as u32, lightmap: &bsp.lit_data[lightofs..slice_end] };
 		packer.pack_own(i, lmtex).unwrap_or_else(|err| panic!("Couldn't pack {i:?}: {err:?}"));
 		frame_num += 1;
-		last_byte = last_byte.max(slice_end);
 	}
 
 	println!("Packed {frame_num} frames into {:?} lightmaps (last: {:?} count: {:?})", packer.get_pages().len(), last_byte, bsp.lit_data.len());
@@ -98,15 +97,16 @@ pub fn pack_lightmaps(bsp: &Bsp) -> LightmapData
 	{
 		let mut lightmap = vec![0u8; (page.width() * page.height() * 3) as usize];
 
-		println!("Building lightmap for page {p} ({:?}x{:?})", page.width(), page.height());
+		//println!("Building lightmap for page {p}, frame count: {:?} dim: ({:?}x{:?})", page.get_frames().len(), page.width(), page.height());
 
+		let mut frame_num = 0;
 		for (f, frame) in page.get_frames()
 		{
 			let r = frame.frame;
 			let surf = &bsp.surfs[*f];
 			surf_data[*f] = Some(SurfLightmapData { idx: p, ofs: Vector2 { x: r.x as f32, y: r.y as f32 } });
 
-			println!("  Inserting lightmap for surf {f} at {r:?}");
+			//println!("  Inserting lightmap for surf {f} at {r:?}");
 
 			for yofs in 0..r.h
 			{
@@ -119,6 +119,10 @@ pub fn pack_lightmaps(bsp: &Bsp) -> LightmapData
 				
 				lightmap[page_start..page_end].copy_from_slice(&bsp.lit_data[l_start..l_end]);
 			}
+
+			print!(" {frame_num}");
+
+			frame_num += 1;
 		}
 
 		lightmaps.push(LightmapPage { bytes: lightmap, width: page.width(), height: page.height() });

@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn Error>>
         .build();
 
     let transport = Transport::new(gns_global.clone(), Ipv4Addr::LOCALHOST.into(), 27821).expect("connection failed");
-	let bsp = load_bsp("assets/box.bsp");
+	let bsp = load_bsp("assets/qbj3_chaosed0.bsp");
 	let mut bsp_render = BspRender::new();
 
 	let mut light_data = pack_lightmaps(&bsp);
@@ -82,7 +82,7 @@ async fn main() -> Result<(), Box<dyn Error>>
 			let tex = rl.load_texture_from_image(&thread, &image)
 				.unwrap_or_else(|err| panic!("Could not generate texture from image: {err}"));
 
-			tex.set_texture_filter(&thread, TextureFilter::TEXTURE_FILTER_ANISOTROPIC_4X);
+			tex.set_texture_filter(&thread, TextureFilter::TEXTURE_FILTER_BILINEAR);
 			tex.set_texture_wrap(&thread, TextureWrap::TEXTURE_WRAP_CLAMP);
 			return tex;
 		}).collect::<Vec<Texture2D>>();
@@ -137,7 +137,7 @@ async fn main() -> Result<(), Box<dyn Error>>
 			bsp_render.render(&textures, &lightmaps, &bsp, &light_data.surf_data, &default_shader, &cutout_shader, modelview * projection, time);
 		});
 
-		d.draw_texture_ex(&lightmaps[0], Vector2::new(10f32, 10f32), 0f32, 10f32, Color::WHITE);
+		d.draw_texture_ex(&lightmaps[0], Vector2::new(10f32, 10f32), 0f32, 0.25f32, Color::WHITE);
 
 		d.draw_fps(10, 10);
     }
@@ -188,7 +188,7 @@ fn update_camera(rl: &mut RaylibHandle, camera : &mut Camera)
 
 	let mut forward = (camera.target - camera.position).normalized();
 	let up = camera.up;
-	let right = forward.cross(up);
+	let right = forward.cross(up).normalized();
 
 	let yaw = Quaternion::from_axis_angle(up, -mouse_delta.x * rot_speed);
 	let pitch = Quaternion::from_axis_angle(right, -mouse_delta.y * rot_speed);

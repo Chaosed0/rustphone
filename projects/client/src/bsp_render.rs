@@ -118,20 +118,18 @@ impl BspRender
 				let edge = &bsp.edges[edge_index.abs() as usize];
 				let v = if edge_index >= 0 { edge.v0 } else { edge.v1 };
 				let vec = bsp.verts[v as usize];
-				let s = (vec.dot(Vector3::new(tex_info.vec0.x, tex_info.vec0.y, tex_info.vec0.z)) + tex_info.vec0.w) / texture.width as f32;
-				let t = (vec.dot(Vector3::new(tex_info.vec1.x, tex_info.vec1.y, tex_info.vec1.z)) + tex_info.vec1.w) / texture.height as f32;
 
-				let light_s = ((s - surf.texture_mins0 as f32) / 16f32 + (surf_light_data.ofs.x + 0.5f32)) / lightmap_data.width as f32;
-				let light_t = ((s - surf.texture_mins1 as f32) / 16f32 + (surf_light_data.ofs.y + 0.5f32)) / lightmap_data.height as f32;
+				let projected = Vector2::new(vec.dot(tex_info.v0), vec.dot(tex_info.v1)) + tex_info.offset;
+				let texture_size_inv = Vector2::new(1f32 / texture.width as f32, 1f32 / texture.height as f32);
+				let uv = projected * texture_size_inv;
 
-				verts.push(GlVert { pos: vec, col: Color::WHITE.into(), st: Vector4::new(s, t, light_s, light_t) });
+				let lightmap_size_inv = Vector2::new(1f32 / lightmap_data.width as f32, 1f32/ lightmap_data.height as f32);
+				let texture_mins = Vector2::new(surf.texture_mins0 as f32, surf.texture_mins1 as f32);
+				let st = (surf_light_data.ofs + 0.5f32 + (projected - texture_mins).scale_by(1f32 / 16f32)) * lightmap_size_inv;
 
-				/*
-				print!("{:?} ({:?},{:?},{:?})", edge_index, vec.x, vec.y, vec.z);
-				if e != surf.first_edge + surf.num_edges as i32 - 1 {
-					print!("->");
-				}
-				*/
+				verts.push(GlVert { pos: vec, col: Color::WHITE.into(), st: Vector4::new(uv.x, uv.y, st.x, st.y) });
+
+				println!("{:?} ({:?},{:?},{:?}) {:?} {:?} ({:?} {:?})", edge_index, vec.x, vec.y, vec.z, surf_light_data.ofs, (projected - texture_mins), st.x, st.y);
 			}
 
 			//println!("");
@@ -225,6 +223,13 @@ impl BspRender
 
 			let mvp_d_loc = self.gl.get_uniform_location(gl_default_shader, "mvp");
 			let mvp_c_loc = self.gl.get_uniform_location(gl_cutout_shader, "mvp");
+			let tex_loc = self.gl.get_uniform_location(gl_cutout_shader, "tex");
+			let lm_loc = self.gl.get_uniform_location(gl_cutout_shader, "lightmap");
+
+			assert!(lightmaps.len() == 1);
+			let gl_lm = NonZeroU32::new(lightmaps[0].id)
+				.map(NativeTexture)
+				.expect("Unable to create Texture object");
 
 			self.gl.bind_vertex_array(Some(data.vao));
 
@@ -250,8 +255,12 @@ impl BspRender
 					.map(NativeTexture)
 					.expect("Unable to create Texture object");
 
-				self.gl.active_texture(0);
+				self.gl.active_texture(TEXTURE0);
 				self.gl.bind_texture(TEXTURE_2D, Some(gl_tex));
+				self.gl.uniform_1_i32(tex_loc.as_ref(), 0);
+				self.gl.active_texture(TEXTURE1);
+				self.gl.bind_texture(TEXTURE_2D, Some(gl_lm));
+				self.gl.uniform_1_i32(lm_loc.as_ref(), 1);
 				self.gl.draw_elements(TRIANGLES, cmd.count, UNSIGNED_INT, cmd.firstIndex * size_of::<u32>() as i32);
 			}
 

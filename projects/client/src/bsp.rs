@@ -146,8 +146,9 @@ pub struct Node
 
 pub struct TexInfo
 {
-	pub vec0: Vector4,
-	pub vec1: Vector4,
+	pub v0: Vector3,
+	pub v1: Vector3,
+	pub offset: Vector2,
 	pub tex_num: i32,
 	pub flags: i32
 }
@@ -484,14 +485,10 @@ fn read_texinfo(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<
 
 	for i in 0..count
 	{
-		let x0 = read_f32(reader, buf);
-		let y0 = read_f32(reader, buf);
-		let z0 = read_f32(reader, buf);
-		let w0 = read_f32(reader, buf);
-		let x1 = read_f32(reader, buf);
-		let y1 = read_f32(reader, buf);
-		let z1 = read_f32(reader, buf);
-		let w1 = read_f32(reader, buf);
+		let v0 = read_vec3(reader, buf);
+		let ofs_x = read_f32(reader, buf);
+		let v1 = read_vec3(reader, buf);
+		let ofs_y = read_f32(reader, buf);
 
 		let mip_tex = read_i32(reader, buf);
 		let mut flags = read_i32(reader, buf);
@@ -503,7 +500,7 @@ fn read_texinfo(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<
 			missing += 1;
 		}
 
-		tex_infos.push(TexInfo { vec0: Vector4::new(x0, y0, z0, w0), vec1: Vector4::new(x1, y1, z1, w1), tex_num: mip_tex, flags });
+		tex_infos.push(TexInfo { v0, v1, offset: Vector2::new(ofs_x, ofs_y), tex_num: mip_tex, flags });
 	}
 
 	if count > 0 && missing > 0
@@ -583,16 +580,16 @@ fn read_faces(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8
 			* is the hallway at the beginning of mfxsp17.  -- ericw
 			*/
 			let val0 =
-				(vert.x as f64 * tex_info.vec0.x as f64) +
-				(vert.y as f64 * tex_info.vec0.y as f64) +
-				(vert.z as f64 * tex_info.vec0.z as f64) +
-				tex_info.vec0.w as f64;
+				(vert.x as f64 * tex_info.v0.x as f64) +
+				(vert.y as f64 * tex_info.v0.y as f64) +
+				(vert.z as f64 * tex_info.v0.z as f64) +
+				tex_info.offset.x as f64;
 
 			let val1 =
-				(vert.x as f64 * tex_info.vec1.x as f64) +
-				(vert.y as f64 * tex_info.vec1.y as f64) +
-				(vert.z as f64 * tex_info.vec1.z as f64) +
-				tex_info.vec1.w as f64;
+				(vert.x as f64 * tex_info.v1.x as f64) +
+				(vert.y as f64 * tex_info.v1.y as f64) +
+				(vert.z as f64 * tex_info.v1.z as f64) +
+				tex_info.offset.y as f64;
 
 			tmin0 = match tmin0 {
 				None => Some(val0 as f32),
