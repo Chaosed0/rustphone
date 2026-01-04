@@ -31,7 +31,7 @@ const SURF_DRAWWATER: i32 = 0x2000;
 
 pub struct Bsp
 {
-	pub textures: Vec<MipTex>,
+	pub textures: Vec<Texture>,
 	pub planes: Vec<Plane>,
 	pub leafs: Vec<Leaf>,
 	pub verts: Vec<Vector3>,
@@ -181,11 +181,8 @@ pub struct Surface
 	pub first_edge: i32, // Lookup in model->surfedges, negative are backwards
 	pub num_edges: i16,
 
-	//lightmap_tex_num: i16,
-	pub extent0: i16,
-	pub extent1: i16,
-	//light_s: i16,
-	//light_t: i16,
+	pub extent_x: i16,
+	pub extent_y: i16,
 
 	pub styles: [u8;MAX_LIGHTMAPS],
 	pub lightofs: i32, // Index into lightdata, [numstyles*surfsize] samples
@@ -211,7 +208,7 @@ struct Hull
 	clip_maxs: Vector3
 }
 
-pub struct MipTex
+pub struct Texture
 {
 	pub name: String,
 	pub width: u32,
@@ -356,7 +353,7 @@ fn read_surf_edges(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut V
 	return surf_edges;
 }
 
-fn read_textures(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<MipTex>
+fn read_textures(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Texture>
 {
 	if header.size == 0
 	{
@@ -377,13 +374,13 @@ fn read_textures(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec
 		dataofs.push(data_offset);
 	}
 
-	let mut mip_texs = Vec::<MipTex>::new();
+	let mut mip_texs = Vec::<Texture>::new();
 
 	for data_offset in dataofs
 	{
 		if data_offset < 0 {
 			// Still must add a texture, this indicates the missing texture
-			mip_texs.push(MipTex { name: "MISSING".into(), width: 0, height: 0, offset1: 0, offset2: 0, offset4: 0, offset8: 0, tex_type: TextureType::Default, pixels: vec![0;0]});
+			mip_texs.push(Texture { name: "MISSING".into(), width: 0, height: 0, offset1: 0, offset2: 0, offset4: 0, offset8: 0, tex_type: TextureType::Default, pixels: vec![0;0]});
 			continue;
 		}
 
@@ -414,7 +411,7 @@ fn read_textures(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec
 
 		println!("Read texture {name}, width {width}, height {height}");
 
-		mip_texs.push(MipTex { name, width, height, offset1, offset2, offset4, offset8, tex_type, pixels });
+		mip_texs.push(Texture { name, width, height, offset1, offset2, offset4, offset8, tex_type, pixels });
 	}
 
 	return mip_texs;
@@ -477,7 +474,7 @@ fn read_planes(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u
 	return planes;
 }
 
-fn read_texinfo(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>, texs: &Vec<MipTex>) -> Vec<TexInfo>
+fn read_texinfo(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>, texs: &Vec<Texture>) -> Vec<TexInfo>
 {
 	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
 		.unwrap_or_else(|err| panic!("{err}: Invalid tex_info offset {:?}", header.offset));
@@ -517,7 +514,7 @@ fn read_texinfo(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<
 	return tex_infos;
 }
 
-fn read_faces(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>, tex_info: &Vec<TexInfo>, textures: &Vec<MipTex>, vertexes: &Vec<Vector3>, surf_edges: &Vec<i32>, edges: &Vec<Edge>) -> Vec<Surface>
+fn read_faces(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>, tex_info: &Vec<TexInfo>, textures: &Vec<Texture>, vertexes: &Vec<Vector3>, surf_edges: &Vec<i32>, edges: &Vec<Edge>) -> Vec<Surface>
 {
 	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
 		.unwrap_or_else(|err| panic!("{err}: Invalid face offset {:?}", header.offset));
@@ -640,7 +637,7 @@ fn read_faces(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8
 
 		// END CALC SURFACE BOUNDS
 
-		let tex: &MipTex = &textures[tex_info.tex_num as usize];
+		let tex: &Texture = &textures[tex_info.tex_num as usize];
 
 		match tex.tex_type
 		{
@@ -677,8 +674,8 @@ fn read_faces(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8
 			flags,
 			first_edge: face.firstedge,
 			num_edges: face.numedges as i16,
-			extent0,
-			extent1,
+			extent_x: extent0,
+			extent_y: extent1,
 			lightofs: face.lightofs,
 			tex_info: face.texinfo as u32,
 			styles: face.styles,
@@ -824,7 +821,7 @@ fn read_submodels(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Ve
 	return nodes;
 }
 
-fn build_used_textures(surfs: &Vec<Surface>, textures: &Vec<MipTex>, tex_infos: &Vec<TexInfo>) -> ([usize; 7], Vec<i32>)
+fn build_used_textures(surfs: &Vec<Surface>, textures: &Vec<Texture>, tex_infos: &Vec<TexInfo>) -> ([usize; 7], Vec<i32>)
 {
 	let mut used_set = HashSet::<i32>::new();
 	let mut texofs = [0usize; 7];
@@ -856,7 +853,6 @@ fn build_used_textures(surfs: &Vec<Surface>, textures: &Vec<MipTex>, tex_infos: 
 		let idx = i as i32;
 		if used_set.contains(&idx)
 		{
-			println!("{:?} {:?} {:?}", used_textures.len(), cur_ofs.len(), tex.tex_type as usize);
 			used_textures[cur_ofs[tex.tex_type as usize]] = idx;
 			cur_ofs[tex.tex_type as usize] += 1;
 		}

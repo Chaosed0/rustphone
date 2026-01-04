@@ -7,6 +7,9 @@ use bsp::*;
 mod bsp_render;
 use bsp_render::*;
 
+mod lit;
+use lit::*;
+
 mod palette;
 use palette::PALETTE;
 
@@ -30,9 +33,11 @@ async fn main() -> Result<(), Box<dyn Error>>
         .build();
 
     let transport = Transport::new(gns_global.clone(), Ipv4Addr::LOCALHOST.into(), 27821).expect("connection failed");
-	let bsp = load_bsp("assets/qbj3_chaosed0.bsp");
+	let bsp = load_bsp("assets/box.bsp");
 	let mut bsp_render = BspRender::new();
-	bsp_render.build_buffers(&bsp);
+
+	let mut light_data = pack_lightmaps(&bsp);
+	bsp_render.build_buffers(&bsp, &light_data);
 
 	let exe_dir_path = std::env::current_exe().expect("no exe path").parent().expect("PARENT").to_owned();
 	let default_vs = exe_dir_path.join("assets/shaders/default.vs").to_str().expect("No vpath").to_owned();
@@ -59,16 +64,28 @@ async fn main() -> Result<(), Box<dyn Error>>
 		{
 			let (i, pixels) = tup.unwrap();
 			let texture = &bsp.textures[i];
-			let image = image_from_pixels(pixels, texture.width, texture.height);
+			let image = image_from_pixels(pixels, texture.width, texture.height, PixelFormat::PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
 			let tex = rl.load_texture_from_image(&thread, &image)
 				.unwrap_or_else(|err| panic!("Could not generate texture from image: {err}"));
 
+			tex.set_texture_filter(&thread, TextureFilter::TEXTURE_FILTER_POINT);
 			tex.set_texture_wrap(&thread, TextureWrap::TEXTURE_WRAP_REPEAT);
 			textures[i] = Some(tex);
 		}
 
 		textures.into_iter().map(|t| t.unwrap()).collect::<Vec<Texture2D>>()
 	};
+
+	let lightmaps = light_data.lightmaps.into_iter().map(|lm|
+		{
+			let image = image_from_pixels(lm.bytes, lm.width, lm.height, PixelFormat::PIXELFORMAT_UNCOMPRESSED_R8G8B8);
+			let tex = rl.load_texture_from_image(&thread, &image)
+				.unwrap_or_else(|err| panic!("Could not generate texture from image: {err}"));
+
+			tex.set_texture_filter(&thread, TextureFilter::TEXTURE_FILTER_ANISOTROPIC_4X);
+			tex.set_texture_wrap(&thread, TextureWrap::TEXTURE_WRAP_CLAMP);
+			return tex;
+		}).collect::<Vec<Texture2D>>();
 
 	let mut time = 0f32;
 
@@ -117,8 +134,10 @@ async fn main() -> Result<(), Box<dyn Error>>
 		{
 			let modelview: Matrix = unsafe { raylib::ffi::rlGetMatrixModelview().try_into().unwrap() };
 			let projection: Matrix = unsafe { raylib::ffi::rlGetMatrixProjection().try_into().unwrap() };
-			bsp_render.render(&textures, &bsp, &default_shader, &cutout_shader, modelview * projection, time);
+			bsp_render.render(&textures, &lightmaps, &bsp, &light_data.surf_data, &default_shader, &cutout_shader, modelview * projection, time);
 		});
+
+		d.draw_texture_ex(&lightmaps[0], Vector2::new(10f32, 10f32), 0f32, 10f32, Color::WHITE);
 
 		d.draw_fps(10, 10);
     }
@@ -140,7 +159,7 @@ fn gen_pixels(pixels: Vec<u8>, width: u32, height: u32) -> Vec<u8>
 	return pixels_u8;
 }
 
-fn image_from_pixels(pixels: Vec<u8>, width: u32, height: u32) -> Image
+fn image_from_pixels(pixels: Vec<u8>, width: u32, height: u32, format: PixelFormat) -> Image
 {
 	unsafe {
 		let mut pixels = std::mem::ManuallyDrop::new(pixels);
@@ -149,7 +168,7 @@ fn image_from_pixels(pixels: Vec<u8>, width: u32, height: u32) -> Image
 			data: pixels.as_mut_ptr() as *mut c_void,
 			width: if width == 0 { 2 } else { width as i32 },
 			height: if height == 0 { 2 } else { height as i32 },
-			format: PixelFormat::PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 as i32,
+			format: format as i32,
 			mipmaps: 1
 		});
 	}

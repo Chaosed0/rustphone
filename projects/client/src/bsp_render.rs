@@ -1,6 +1,7 @@
 use raylib::prelude::*;
 use raylib::core::shaders::Shader;
 use crate::bsp::{self, Bsp};
+use crate::lit::{LightmapData, SurfLightmapData};
 use glow::*;
 use ::core::ffi::c_void;
 use ::core::num::NonZeroU32;
@@ -13,8 +14,6 @@ pub struct BspRender
 {
 	gl: Context,
 	data: Option<RenderData>,
-	data2: Option<NativeVertexArray>,
-	final_s: Option<NativeProgram>,
 }
 
 struct RenderData
@@ -60,10 +59,10 @@ impl BspRender
 
 		let gl = unsafe { glow::Context::from_loader_function(|s| gl_loader::get_proc_address(s) as *const c_void) };
 
-		return BspRender { gl, data: None, data2: None, final_s: None };
+		return BspRender { gl, data: None };
 	}
 
-	pub fn build_buffers(&mut self, bsp: &Bsp)
+	pub fn build_buffers(&mut self, bsp: &Bsp, light_data: &LightmapData)
 	{
 		//let numverts = bsp.surfs.iter().map(|surf| surf.num_edges as i32).sum::<i32>();
 		//let numtex = bsp.textures.len();
@@ -96,12 +95,22 @@ impl BspRender
 			sum += cmd.count;
 		}
 
-		for surf in &bsp.surfs
+		for (i, surf) in bsp.surfs.iter().enumerate()
 		{
 			surf_vbo_map.push(verts.len());
 
+			let surf_light_data = match &light_data.surf_data[i] { Some(v) => v, None => continue };
+			let lightmap_data = &light_data.lightmaps[surf_light_data.idx];
+
 			//println!("SURF: {:?} {:?}", surf.first_edge, surf.num_edges);
 			//print!("   ");
+
+			let tex_info = &bsp.tex_infos[surf.tex_info as usize];
+			let texture = &bsp.textures[tex_info.tex_num as usize];
+
+			if texture.name.starts_with("clip") || texture.name.starts_with("trigger") || texture.name.starts_with("skip") {
+				continue;
+			}
 
 			for e in surf.first_edge..(surf.first_edge + surf.num_edges as i32)
 			{
@@ -109,12 +118,13 @@ impl BspRender
 				let edge = &bsp.edges[edge_index.abs() as usize];
 				let v = if edge_index >= 0 { edge.v0 } else { edge.v1 };
 				let vec = bsp.verts[v as usize];
-				let tex_info = &bsp.tex_infos[surf.tex_info as usize];
-				let texture = &bsp.textures[tex_info.tex_num as usize];
 				let s = (vec.dot(Vector3::new(tex_info.vec0.x, tex_info.vec0.y, tex_info.vec0.z)) + tex_info.vec0.w) / texture.width as f32;
 				let t = (vec.dot(Vector3::new(tex_info.vec1.x, tex_info.vec1.y, tex_info.vec1.z)) + tex_info.vec1.w) / texture.height as f32;
 
-				verts.push(GlVert { pos: vec, col: Color::WHITE.into(), st: Vector4::new(s, t, 0f32, 0f32) });
+				let light_s = ((s - surf.texture_mins0 as f32) / 16f32 + (surf_light_data.ofs.x + 0.5f32)) / lightmap_data.width as f32;
+				let light_t = ((s - surf.texture_mins1 as f32) / 16f32 + (surf_light_data.ofs.y + 0.5f32)) / lightmap_data.height as f32;
+
+				verts.push(GlVert { pos: vec, col: Color::WHITE.into(), st: Vector4::new(s, t, light_s, light_t) });
 
 				/*
 				print!("{:?} ({:?},{:?},{:?})", edge_index, vec.x, vec.y, vec.z);
@@ -179,36 +189,6 @@ impl BspRender
 			self.gl.enable_vertex_array_attrib(vao, 2);
 
 			self.data = Some(RenderData { vao, vbo, ibo, cmds, cmd_count: sum });
-
-			let vertices =
-				[GlVert { pos: Vector3::new(-0.5f32, -0.5f32, 0.0f32), col: Color::WHITE.into(), st: Vector4::new(1f32, 1f32, 0f32, 0f32) },
-				GlVert { pos: Vector3::new(0.5f32, -0.5f32, 0.0f32), col: Color::WHITE.into(), st: Vector4::new(1f32, 0f32, 0f32, 0f32) },
-				GlVert { pos: Vector3::new(0.5f32, 0.5f32, 0.0f32), col: Color::WHITE.into(), st: Vector4::new(0f32, 0f32, 0f32, 0f32) },
-				GlVert { pos: Vector3::new(-0.5f32, 0.5f32, 0.0f32), col: Color::WHITE.into(), st: Vector4::new(0f32, 1f32, 0f32, 0f32) }];
-
-			let indexes = [0u32, 1, 3, 1, 2, 3];
-
-			let vao = self.gl.create_vertex_array().unwrap();
-			let vbo = self.gl.create_buffer().unwrap();
-			let ebo = self.gl.create_buffer().unwrap();
-
-			let verts_u8: &[u8] = std::slice::from_raw_parts(vertices.as_ptr() as *const u8, vertices.len() * size_of::<GlVert>());
-			let indexes_u8: &[u8] = std::slice::from_raw_parts(indexes.as_ptr() as *const u8, indexes.len() * size_of::<u32>());
-
-			self.gl.bind_vertex_array(Some(vao));
-			self.gl.bind_buffer(ARRAY_BUFFER, Some(vbo));
-			self.gl.buffer_data_u8_slice(ARRAY_BUFFER, verts_u8, STATIC_DRAW);
-			self.gl.bind_buffer(ELEMENT_ARRAY_BUFFER, Some(ebo));
-			self.gl.buffer_data_u8_slice(ELEMENT_ARRAY_BUFFER, indexes_u8, STATIC_DRAW);
-
-			self.gl.vertex_attrib_pointer_f32(0, 3, FLOAT, false, size_of::<GlVert>() as i32, offset_of!(GlVert, pos) as i32);
-			self.gl.vertex_attrib_pointer_f32(1, 4, FLOAT, false, size_of::<GlVert>() as i32, offset_of!(GlVert, col) as i32);
-			self.gl.vertex_attrib_pointer_f32(2, 4, FLOAT, false, size_of::<GlVert>() as i32, offset_of!(GlVert, st) as i32);
-			self.gl.enable_vertex_array_attrib(vao, 0);
-			self.gl.enable_vertex_array_attrib(vao, 1);
-			self.gl.enable_vertex_array_attrib(vao, 2);
-			
-			self.data2 = Some(vao);
 		}
 
 		//println!("VERTS {:?}", verts);
@@ -220,7 +200,7 @@ impl BspRender
 		return match self.data { Some(_) => true, None => false };
 	}
 
-	pub fn render(&self, textures: &Vec<Texture2D>, bsp: &Bsp, default_shader: &Shader, cutout_shader: &Shader, mvp: Matrix, time: f32)
+	pub fn render(&self, textures: &Vec<Texture2D>, lightmaps: &Vec<Texture2D>, bsp: &Bsp, light_data: &Vec<Option<SurfLightmapData>>, default_shader: &Shader, cutout_shader: &Shader, mvp: Matrix, time: f32)
 	{
 		let data = match &self.data { Some(v) => v, None => return };
 
@@ -283,10 +263,6 @@ impl BspRender
 
 			self.gl.active_texture(0);
 			self.gl.bind_texture(TEXTURE_2D, Some(gl_tex));
-
-			self.gl.bind_vertex_array(Some(self.data2.unwrap()));
-			self.gl.draw_elements(TRIANGLES, 6, UNSIGNED_INT, 0);
-			self.gl.bind_vertex_array(None);
 
 			self.gl.use_program(None);
 		}
