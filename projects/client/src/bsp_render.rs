@@ -129,7 +129,7 @@ impl BspRender
 
 				verts.push(GlVert { pos: vec, col: Color::WHITE.into(), st: Vector4::new(uv.x, uv.y, st.x, st.y) });
 
-				println!("{:?} ({:?},{:?},{:?}) {:?} {:?} ({:?} {:?})", edge_index, vec.x, vec.y, vec.z, surf_light_data.ofs, (projected - texture_mins), st.x, st.y);
+				//println!("{:?} ({:?},{:?},{:?}) {:?} {:?} ({:?} {:?})", edge_index, vec.x, vec.y, vec.z, surf_light_data.ofs, (projected - texture_mins), st.x, st.y);
 			}
 
 			//println!("");

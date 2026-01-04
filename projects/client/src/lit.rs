@@ -95,11 +95,13 @@ pub fn pack_lightmaps(bsp: &Bsp) -> LightmapData
 
 	for (p, page) in packer.get_pages().iter().enumerate()
 	{
-		let mut lightmap = vec![0u8; (page.width() * page.height() * 3) as usize];
+		let width = page.width();
+		let height = page.height();
 
-		//println!("Building lightmap for page {p}, frame count: {:?} dim: ({:?}x{:?})", page.get_frames().len(), page.width(), page.height());
+		let mut lightmap = vec![0u8; (width * height * 3) as usize];
 
-		let mut frame_num = 0;
+		println!("Building lightmap for page {p}, frame count: {:?} dim: ({:?}x{:?})", page.get_frames().len(), width, height);
+
 		for (f, frame) in page.get_frames()
 		{
 			let r = frame.frame;
@@ -111,7 +113,7 @@ pub fn pack_lightmaps(bsp: &Bsp) -> LightmapData
 			for yofs in 0..r.h
 			{
 				let page_y = r.y + yofs;
-				let page_start = ((page_y * page.width() + r.x) * 3) as usize;
+				let page_start = ((page_y * width + r.x) * 3) as usize;
 				let page_end = (page_start as u32 + r.w * 3) as usize;
 
 				let l_start = ((surf.lightofs as u32 + yofs * r.w) * 3) as usize;
@@ -119,10 +121,6 @@ pub fn pack_lightmaps(bsp: &Bsp) -> LightmapData
 				
 				lightmap[page_start..page_end].copy_from_slice(&bsp.lit_data[l_start..l_end]);
 			}
-
-			print!(" {frame_num}");
-
-			frame_num += 1;
 		}
 
 		lightmaps.push(LightmapPage { bytes: lightmap, width: page.width(), height: page.height() });
