@@ -47,6 +47,7 @@ struct ShaderLocationSet
 	texture: Option<NativeUniformLocation>,
 	lightmap: Option<NativeUniformLocation>,
 	skybox: Option<NativeUniformLocation>,
+	eye_pos: Option<NativeUniformLocation>,
 }
 
 #[repr(C)]
@@ -94,6 +95,11 @@ impl Shader
 	fn load_mvp(&mut self, gl: &Context)
 	{
 		self.locs.mvp = self.load_loc(gl, "mvp");
+	}
+
+	fn load_eye_pos(&mut self, gl: &Context)
+	{
+		self.locs.eye_pos = self.load_loc(gl, "eyePos");
 	}
 
 	fn load_tex(&mut self, gl: &Context)
@@ -289,6 +295,7 @@ impl BspRender
 		skybox._use(&self.gl);
 		skybox.load_mvp(&self.gl);
 		skybox.load_skybox(&self.gl);
+		skybox.load_eye_pos(&self.gl);
 
 		self.shaders = Some(ShaderSet { default, cutout, skybox });
 	}
@@ -303,11 +310,11 @@ impl BspRender
 
 			const CUBEMAP_SIDES: [(&str, u32); 6] = [
 				("up", TEXTURE_CUBE_MAP_POSITIVE_Y),
-				("bk", TEXTURE_CUBE_MAP_NEGATIVE_Z),
+				("bk", TEXTURE_CUBE_MAP_NEGATIVE_X),
 				("dn", TEXTURE_CUBE_MAP_NEGATIVE_Y),
-				("ft", TEXTURE_CUBE_MAP_POSITIVE_Z),
-				("lf", TEXTURE_CUBE_MAP_NEGATIVE_X),
-				("rt", TEXTURE_CUBE_MAP_POSITIVE_X)];
+				("ft", TEXTURE_CUBE_MAP_POSITIVE_X),
+				("lf", TEXTURE_CUBE_MAP_NEGATIVE_Z),
+				("rt", TEXTURE_CUBE_MAP_POSITIVE_Z)];
 
 			for (side_name, gl_side) in CUBEMAP_SIDES
 			{
@@ -337,7 +344,7 @@ impl BspRender
 		return match self.data { Some(_) => true, None => false };
 	}
 
-	pub fn render(&self, textures: &Vec<Texture2D>, lightmaps: &Vec<Texture2D>, bsp: &Bsp, light_data: &Vec<Option<SurfLightmapData>>, mvp: Matrix, time: f32)
+	pub fn render(&self, textures: &Vec<Texture2D>, lightmaps: &Vec<Texture2D>, bsp: &Bsp, light_data: &Vec<Option<SurfLightmapData>>, mvp: Matrix, camera: Camera, time: f32)
 	{
 		let data = match &self.data { Some(v) => v, None => return };
 
@@ -383,6 +390,7 @@ impl BspRender
 						shaders.skybox._use(&self.gl);
 						self.bind_texture(TEXTURE0, &self.skybox.unwrap(), shaders.cutout.locs.skybox, 0);
 						self.gl.uniform_matrix_4_f32_slice(shaders.skybox.locs.mvp.as_ref(), false, &mat_f32);
+						self.gl.uniform_3_f32(shaders.skybox.locs.eye_pos.as_ref(), camera.position.x, camera.position.y, camera.position.z);
 					}
 					_ => {
 						shaders.default._use(&self.gl);

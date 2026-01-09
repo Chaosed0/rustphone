@@ -1,4 +1,5 @@
 mod transport;
+use raylib::ffi::CSSPalette;
 use transport::Transport;
 
 mod bsp;
@@ -34,6 +35,7 @@ async fn main() -> Result<(), Box<dyn Error>>
 
     let transport = Transport::new(gns_global.clone(), Ipv4Addr::LOCALHOST.into(), 27821).expect("connection failed");
 	let bsp = load_bsp("assets/qbj3_chaosed0.bsp");
+	//let bsp = load_bsp("assets/box.bsp");
 	let mut bsp_render = BspRender::new();
 
 	bsp_render.load_skybox("assets/skybox/mak_cloudysky5");
@@ -132,7 +134,7 @@ async fn main() -> Result<(), Box<dyn Error>>
 
         let mut d = rl.begin_drawing(&thread);
 
-        d.clear_background(Color::WHITE);
+        d.clear_background(Color::BLACK);
 		unsafe { raylib::ffi::rlEnableDepthTest() };
 		//unsafe { raylib::ffi::rlDisableBackfaceCulling() };
 		unsafe { raylib::ffi::rlSetClipPlanes(1f64, 100000f64) };
@@ -141,7 +143,7 @@ async fn main() -> Result<(), Box<dyn Error>>
 		{
 			let modelview: Matrix = unsafe { raylib::ffi::rlGetMatrixModelview().try_into().unwrap() };
 			let projection: Matrix = unsafe { raylib::ffi::rlGetMatrixProjection().try_into().unwrap() };
-			bsp_render.render(&textures, &lightmaps, &bsp, &light_data.surf_data, modelview * projection, time);
+			bsp_render.render(&textures, &lightmaps, &bsp, &light_data.surf_data, modelview * projection, cam, time);
 		});
 
 		d.draw_texture_ex(&lightmaps[0], Vector2::new(10f32, 10f32), 0f32, 0.25f32, Color::WHITE);
