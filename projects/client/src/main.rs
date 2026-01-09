@@ -36,8 +36,7 @@ async fn main() -> Result<(), Box<dyn Error>>
 	let bsp = load_bsp("assets/qbj3_chaosed0.bsp");
 	let mut bsp_render = BspRender::new();
 
-	let mut light_data = pack_lightmaps(&bsp);
-	bsp_render.build_buffers(&bsp, &light_data);
+	bsp_render.load_skybox("assets/skybox/mak_cloudysky5");
 
 	let exe_dir_path = std::env::current_exe().expect("no exe path").parent().expect("PARENT").to_owned();
 	let default_vs = exe_dir_path.join("assets/shaders/default.vs").to_str().expect("No vpath").to_owned();
@@ -45,8 +44,13 @@ async fn main() -> Result<(), Box<dyn Error>>
 	let default_shader = rl.load_shader(&thread, Some(default_vs.as_str()), Some(default_fs.as_str()));
 	let cutout_fs = exe_dir_path.join("assets/shaders/cutout.fs").to_str().expect("No fpath").to_owned();
 	let cutout_shader = rl.load_shader(&thread, Some(default_vs.as_str()), Some(cutout_fs.as_str()));
+	let skybox_vs = exe_dir_path.join("assets/shaders/skybox.vs").to_str().expect("No vpath").to_owned();
+	let skybox_fs = exe_dir_path.join("assets/shaders/skybox.fs").to_str().expect("No fpath").to_owned();
+	let skybox_shader = rl.load_shader(&thread, Some(skybox_vs.as_str()), Some(skybox_fs.as_str()));
 
-	assert!(default_shader.is_shader_valid() && cutout_shader.is_shader_valid(), "Error compiling shaders");
+	assert!(default_shader.is_shader_valid() && cutout_shader.is_shader_valid() && skybox_shader.is_shader_valid(), "Error compiling shaders");
+
+	bsp_render.load_shaders(&default_shader, &cutout_shader, &skybox_shader);
 
 	let textures = {
 		let mut image_gen_set = tokio::task::JoinSet::new();
@@ -76,6 +80,9 @@ async fn main() -> Result<(), Box<dyn Error>>
 		textures.into_iter().map(|t| t.unwrap()).collect::<Vec<Texture2D>>()
 	};
 
+	let mut light_data = pack_lightmaps(&bsp);
+	bsp_render.build_buffers(&bsp, &light_data);
+
 	let lightmaps = light_data.lightmaps.into_iter().map(|lm|
 		{
 			let image = image_from_pixels(lm.bytes, lm.width, lm.height, PixelFormat::PIXELFORMAT_UNCOMPRESSED_R8G8B8);
@@ -89,11 +96,11 @@ async fn main() -> Result<(), Box<dyn Error>>
 
 	let mut time = 0f32;
 
-	println!("ENTITIES: {:?}", bsp.entities);
+	//println!("ENTITIES: {:?}", bsp.entities);
 
 	rl.set_target_fps(60);
 
-	let mut cam = Camera3D::perspective(Vector3::zero(), Vector3::forward(), Vector3::up(), 60f32);
+	let mut cam = Camera3D::perspective(Vector3::ZERO, Vector3::Z, Vector3::Y, 60f32);
 
 	rl.disable_cursor();
 	rl.set_exit_key(None);
@@ -130,11 +137,11 @@ async fn main() -> Result<(), Box<dyn Error>>
 		//unsafe { raylib::ffi::rlDisableBackfaceCulling() };
 		unsafe { raylib::ffi::rlSetClipPlanes(1f64, 100000f64) };
 
-		d.draw_mode3D(cam, |mut d3d, cam|
+		d.draw_mode3D(cam, |mut d3d|
 		{
 			let modelview: Matrix = unsafe { raylib::ffi::rlGetMatrixModelview().try_into().unwrap() };
 			let projection: Matrix = unsafe { raylib::ffi::rlGetMatrixProjection().try_into().unwrap() };
-			bsp_render.render(&textures, &lightmaps, &bsp, &light_data.surf_data, &default_shader, &cutout_shader, modelview * projection, time);
+			bsp_render.render(&textures, &lightmaps, &bsp, &light_data.surf_data, modelview * projection, time);
 		});
 
 		d.draw_texture_ex(&lightmaps[0], Vector2::new(10f32, 10f32), 0f32, 0.25f32, Color::WHITE);
@@ -186,14 +193,12 @@ fn update_camera(rl: &mut RaylibHandle, camera : &mut Camera)
     let mut speed = CAMERA_MOVE_SPEED * delta;
     let rot_speed = CAMERA_ROTATION_SPEED * delta;
 
-	let mut forward = (camera.target - camera.position).normalized();
+	let mut forward = (camera.target - camera.position).try_normalize().unwrap();
 	let up = camera.up;
-	let right = forward.cross(up).normalized();
+	let right = forward.cross(up).try_normalize().unwrap();
 
-	let yaw = Quaternion::from_axis_angle(up, -mouse_delta.x * rot_speed);
-	let pitch = Quaternion::from_axis_angle(right, -mouse_delta.y * rot_speed);
-
-	forward = forward.rotate_by(yaw).rotate_by(pitch);
+	forward = forward.rotate_axis(up, -mouse_delta.x * rot_speed);
+	forward = forward.rotate_axis(right, -mouse_delta.y * rot_speed);
 
 	if rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT) { speed *= 3f32; }
 	if rl.is_key_down(KeyboardKey::KEY_W) { camera.position += forward * speed; }

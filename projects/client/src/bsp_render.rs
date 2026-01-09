@@ -1,19 +1,21 @@
 use raylib::prelude::*;
-use raylib::core::shaders::Shader;
 use crate::bsp::{self, Bsp};
 use crate::lit::{LightmapData, SurfLightmapData};
 use glow::*;
 use ::core::ffi::c_void;
 use ::core::num::NonZeroU32;
-use ::core::ptr::addr_of;
 use ::core::fmt::Debug;
 use std::fmt::Formatter;
 use std::mem::offset_of;
+
+type RlShader = raylib::core::shaders::Shader;
 
 pub struct BspRender
 {
 	gl: Context,
 	data: Option<RenderData>,
+	skybox: Option<NativeTexture>,
+	shaders: Option<ShaderSet>
 }
 
 struct RenderData
@@ -23,6 +25,28 @@ struct RenderData
 	ibo: NativeBuffer,
 	cmds: Vec<DrawElementsIndirectCommand>,
 	cmd_count: i32,
+}
+
+struct ShaderSet
+{
+	default: Shader,
+	cutout: Shader,
+	skybox: Shader,
+}
+
+struct Shader
+{
+	id: NativeProgram,
+	locs: ShaderLocationSet,
+}
+
+#[derive(Default)]
+struct ShaderLocationSet
+{
+	mvp: Option<NativeUniformLocation>,
+	texture: Option<NativeUniformLocation>,
+	lightmap: Option<NativeUniformLocation>,
+	skybox: Option<NativeUniformLocation>,
 }
 
 #[repr(C)]
@@ -51,6 +75,48 @@ struct DrawElementsIndirectCommand
 	baseInstance: u32,
 }
 
+impl Shader
+{
+	fn new(shader: &RlShader) -> Shader
+	{
+		let gl_shader = NonZeroU32::new(shader.id)
+			.map(NativeProgram)
+			.expect("Unable to create Shader object");
+
+		return Shader { id: gl_shader, locs: Default::default() };
+	}
+
+	fn _use(&self, gl: &Context)
+	{
+		unsafe { gl.use_program(Some(self.id)) };
+	}
+
+	fn load_mvp(&mut self, gl: &Context)
+	{
+		self.locs.mvp = self.load_loc(gl, "mvp");
+	}
+
+	fn load_tex(&mut self, gl: &Context)
+	{
+		self.locs.texture = self.load_loc(gl, "tex");
+	}
+
+	fn load_lightmap(&mut self, gl: &Context)
+	{
+		self.locs.lightmap = self.load_loc(gl, "lightmap");
+	}
+
+	fn load_skybox(&mut self, gl: &Context)
+	{
+		self.locs.skybox = self.load_loc(gl, "skybox");
+	}
+
+	fn load_loc(&self, gl: &Context, name: &str) -> Option<NativeUniformLocation>
+	{
+		return unsafe { gl.get_uniform_location(self.id, name) };
+	}
+}
+
 impl BspRender
 {
 	pub fn new() -> Self
@@ -59,7 +125,7 @@ impl BspRender
 
 		let gl = unsafe { glow::Context::from_loader_function(|s| gl_loader::get_proc_address(s) as *const c_void) };
 
-		return BspRender { gl, data: None };
+		return BspRender { gl, data: None, skybox: None, shaders: None };
 	}
 
 	pub fn build_buffers(&mut self, bsp: &Bsp, light_data: &LightmapData)
@@ -99,8 +165,7 @@ impl BspRender
 		{
 			surf_vbo_map.push(verts.len());
 
-			let surf_light_data = match &light_data.surf_data[i] { Some(v) => v, None => continue };
-			let lightmap_data = &light_data.lightmaps[surf_light_data.idx];
+			let surf_light_data = &light_data.surf_data[i];
 
 			//println!("SURF: {:?} {:?}", surf.first_edge, surf.num_edges);
 			//print!("   ");
@@ -123,16 +188,26 @@ impl BspRender
 				let texture_size_inv = Vector2::new(1f32 / texture.width as f32, 1f32 / texture.height as f32);
 				let uv = projected * texture_size_inv;
 
-				let lightmap_size_inv = Vector2::new(1f32 / lightmap_data.width as f32, 1f32/ lightmap_data.height as f32);
 				let texture_mins = Vector2::new(surf.texture_mins0 as f32, surf.texture_mins1 as f32);
-				let st = (surf_light_data.ofs + 0.5f32 + (projected - texture_mins).scale_by(1f32 / 16f32)) * lightmap_size_inv;
+				let st = match surf_light_data {
+					Some(data) => {
+						let lightmap_data = &light_data.lightmaps[data.idx];
+						let lightmap_size_inv = Vector2::new(1f32 / lightmap_data.width as f32, 1f32/ lightmap_data.height as f32);
+						(data.ofs + 0.5f32 + (projected - texture_mins) * 1f32 / 16f32) * lightmap_size_inv
+					},
+					None => Vector2::ZERO
+				};
 
-				verts.push(GlVert { pos: vec, col: Color::WHITE.into(), st: Vector4::new(uv.x, uv.y, st.x, st.y) });
+				verts.push(GlVert { pos: vec, col: col_to_vec4(Color::WHITE), st: Vector4::new(uv.x, uv.y, st.x, st.y) });
 
 				//println!("{:?} ({:?},{:?},{:?}) {:?} {:?} ({:?} {:?})", edge_index, vec.x, vec.y, vec.z, surf_light_data.ofs, (projected - texture_mins), st.x, st.y);
 			}
 
 			//println!("");
+		}
+
+		fn col_to_vec4(col: Color) -> Vector4 {
+			return Vector4::new(col.r as f32 / 255f32, col.g as f32 / 255f32, col.b as f32 / 255f32, col.a as f32 / 255f32);
 		}
 
 		for (s, surf) in bsp.surfs.iter().enumerate()
@@ -193,25 +268,81 @@ impl BspRender
 		//println!("ELEMS {:?}", indexes);
 	}
 
+	pub fn load_shaders(&mut self, rl_default: &RlShader, rl_cutout: &RlShader, rl_skybox: &RlShader)
+	{
+		println!("Loading default shader");
+		let mut default = Shader::new(rl_default);
+		default._use(&self.gl);
+		default.load_mvp(&self.gl);
+		default.load_tex(&self.gl);
+		default.load_lightmap(&self.gl);
+
+		println!("Loading cutout shader");
+		let mut cutout = Shader::new(rl_cutout);
+		cutout._use(&self.gl);
+		cutout.load_mvp(&self.gl);
+		cutout.load_tex(&self.gl);
+		cutout.load_lightmap(&self.gl);
+
+		println!("Loading skybox shader");
+		let mut skybox = Shader::new(rl_skybox);
+		skybox._use(&self.gl);
+		skybox.load_mvp(&self.gl);
+		skybox.load_skybox(&self.gl);
+
+		self.shaders = Some(ShaderSet { default, cutout, skybox });
+	}
+
+	pub fn load_skybox(&mut self, prefix: &str)
+	{
+		unsafe
+		{
+			let texture = self.gl.create_texture().unwrap();
+			self.gl.bind_texture(TEXTURE_CUBE_MAP, Some(texture));
+			let exe_dir_path = std::env::current_exe().expect("no exe path").parent().expect("PARENT").to_owned();
+
+			const CUBEMAP_SIDES: [(&str, u32); 6] = [
+				("up", TEXTURE_CUBE_MAP_POSITIVE_Y),
+				("bk", TEXTURE_CUBE_MAP_NEGATIVE_Z),
+				("dn", TEXTURE_CUBE_MAP_NEGATIVE_Y),
+				("ft", TEXTURE_CUBE_MAP_POSITIVE_Z),
+				("lf", TEXTURE_CUBE_MAP_NEGATIVE_X),
+				("rt", TEXTURE_CUBE_MAP_POSITIVE_X)];
+
+			for (side_name, gl_side) in CUBEMAP_SIDES
+			{
+				let name = exe_dir_path.join(format!("{prefix}_{side_name}.tga")).to_str().expect("No path to skybox!").to_owned();
+				let image = Image::load_image(&name).expect("No skybox image");
+				let size = image.get_pixel_data_size();
+				let width = image.width;
+				let height = image.height;
+				let raw_image = image.to_raw();
+				let image_data = std::slice::from_raw_parts::<u8>(raw_image.data as *const u8, size);
+				let data = PixelUnpackData::Slice(Some(image_data));
+				self.gl.tex_image_2d(gl_side, 0, RGB as i32, width, height, 0, RGB, UNSIGNED_BYTE, data);
+			}
+
+			self.gl.tex_parameter_i32(TEXTURE_CUBE_MAP, TEXTURE_MIN_FILTER, NEAREST as i32);
+			self.gl.tex_parameter_i32(TEXTURE_CUBE_MAP, TEXTURE_MAG_FILTER, NEAREST as i32);
+			self.gl.tex_parameter_i32(TEXTURE_CUBE_MAP, TEXTURE_WRAP_S, CLAMP_TO_EDGE as i32);
+			self.gl.tex_parameter_i32(TEXTURE_CUBE_MAP, TEXTURE_WRAP_T, CLAMP_TO_EDGE as i32);
+			self.gl.tex_parameter_i32(TEXTURE_CUBE_MAP, TEXTURE_WRAP_R, CLAMP_TO_EDGE as i32);
+
+			self.skybox = Some(texture);
+		}
+	}
+
 	pub fn is_ready(&self) -> bool
 	{
 		return match self.data { Some(_) => true, None => false };
 	}
 
-	pub fn render(&self, textures: &Vec<Texture2D>, lightmaps: &Vec<Texture2D>, bsp: &Bsp, light_data: &Vec<Option<SurfLightmapData>>, default_shader: &Shader, cutout_shader: &Shader, mvp: Matrix, time: f32)
+	pub fn render(&self, textures: &Vec<Texture2D>, lightmaps: &Vec<Texture2D>, bsp: &Bsp, light_data: &Vec<Option<SurfLightmapData>>, mvp: Matrix, time: f32)
 	{
 		let data = match &self.data { Some(v) => v, None => return };
 
 		unsafe
 		{
-			let gl_default_shader = NonZeroU32::new(default_shader.id)
-				.map(NativeProgram)
-				.expect("Unable to create Shader object");
-
-			let gl_cutout_shader = NonZeroU32::new(cutout_shader.id)
-				.map(NativeProgram)
-				.expect("Unable to create Shader object");
-
 			//let mat_f32 = std::slice::from_raw_parts(addr_of!(mvp) as *const f32, 16);
 			let mat_f32 =
 			[
@@ -220,11 +351,6 @@ impl BspRender
 				mvp.m8, mvp.m9, mvp.m10, mvp.m11,
 				mvp.m12, mvp.m13, mvp.m14, mvp.m15,
 			];
-
-			let mvp_d_loc = self.gl.get_uniform_location(gl_default_shader, "mvp");
-			let mvp_c_loc = self.gl.get_uniform_location(gl_cutout_shader, "mvp");
-			let tex_loc = self.gl.get_uniform_location(gl_cutout_shader, "tex");
-			let lm_loc = self.gl.get_uniform_location(gl_cutout_shader, "lightmap");
 
 			assert!(lightmaps.len() == 1);
 			let gl_lm = NonZeroU32::new(lightmaps[0].id)
@@ -239,41 +365,47 @@ impl BspRender
 					continue
 				}
 
-				match bsptex.tex_type
-				{
-					bsp::TextureType::Cutout => {
-						self.gl.use_program(Some(gl_cutout_shader));
-						self.gl.uniform_matrix_4_f32_slice(mvp_c_loc.as_ref(), false, &mat_f32);
-					}
-					_ => {
-						self.gl.use_program(Some(gl_default_shader));
-						self.gl.uniform_matrix_4_f32_slice(mvp_d_loc.as_ref(), false, &mat_f32);
-					}
-				}
+				let shaders = self.shaders.as_ref().unwrap();
 
 				let gl_tex = NonZeroU32::new(tex.id)
 					.map(NativeTexture)
 					.expect("Unable to create Texture object");
 
-				self.gl.active_texture(TEXTURE0);
-				self.gl.bind_texture(TEXTURE_2D, Some(gl_tex));
-				self.gl.uniform_1_i32(tex_loc.as_ref(), 0);
-				self.gl.active_texture(TEXTURE1);
-				self.gl.bind_texture(TEXTURE_2D, Some(gl_lm));
-				self.gl.uniform_1_i32(lm_loc.as_ref(), 1);
+				match bsptex.tex_type
+				{
+					bsp::TextureType::Cutout => {
+						shaders.cutout._use(&self.gl);
+						self.bind_texture(TEXTURE0, &gl_tex, shaders.cutout.locs.texture, 0);
+						self.bind_texture(TEXTURE1, &gl_lm, shaders.cutout.locs.lightmap, 1);
+						self.gl.uniform_matrix_4_f32_slice(shaders.cutout.locs.mvp.as_ref(), false, &mat_f32);
+					}
+					bsp::TextureType::Sky => {
+						shaders.skybox._use(&self.gl);
+						self.bind_texture(TEXTURE0, &self.skybox.unwrap(), shaders.cutout.locs.skybox, 0);
+						self.gl.uniform_matrix_4_f32_slice(shaders.skybox.locs.mvp.as_ref(), false, &mat_f32);
+					}
+					_ => {
+						shaders.default._use(&self.gl);
+						self.bind_texture(TEXTURE0, &gl_tex, shaders.cutout.locs.texture, 0);
+						self.bind_texture(TEXTURE1, &gl_lm, shaders.cutout.locs.lightmap, 1);
+						self.gl.uniform_matrix_4_f32_slice(shaders.cutout.locs.mvp.as_ref(), false, &mat_f32);
+					}
+				}
+
 				self.gl.draw_elements(TRIANGLES, cmd.count, UNSIGNED_INT, cmd.firstIndex * size_of::<u32>() as i32);
 			}
 
-			self.gl.bind_texture(TEXTURE_2D, None);
-
-			let gl_tex = NonZeroU32::new(textures[0].id)
-				.map(NativeTexture)
-				.expect("Unable to create Texture object");
-
-			self.gl.active_texture(0);
-			self.gl.bind_texture(TEXTURE_2D, Some(gl_tex));
-
 			self.gl.use_program(None);
+		}
+	}
+
+	fn bind_texture(&self, unit: u32, tex: &NativeTexture, loc: Option<NativeUniformLocation>, index: i32)
+	{
+		unsafe
+		{
+			self.gl.active_texture(unit);
+			self.gl.bind_texture(TEXTURE_2D, Some(*tex));
+			self.gl.uniform_1_i32(loc.as_ref(), index);
 		}
 	}
 }
