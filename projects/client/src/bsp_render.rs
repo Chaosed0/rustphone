@@ -179,10 +179,6 @@ impl BspRender
 			let tex_info = &bsp.tex_infos[surf.tex_info as usize];
 			let texture = &bsp.textures[tex_info.tex_num as usize];
 
-			if texture.name.starts_with("clip") || texture.name.starts_with("trigger") || texture.name.starts_with("skip") {
-				continue;
-			}
-
 			for e in surf.first_edge..(surf.first_edge + surf.num_edges as i32)
 			{
 				let edge_index = bsp.surf_edges[e as usize];
@@ -218,8 +214,14 @@ impl BspRender
 
 		for (s, surf) in bsp.surfs.iter().enumerate()
 		{
-			let vbo_firstvert = surf_vbo_map[s] as u32;
 			let tex_info = &bsp.tex_infos[surf.tex_info as usize];
+			let texture = &bsp.textures[tex_info.tex_num as usize];
+
+			if texture.name.starts_with("clip") || texture.name.starts_with("trigger") || texture.name.starts_with("skip") {
+				continue;
+			}
+
+			let vbo_firstvert = surf_vbo_map[s] as u32;
 			let cmd = &mut cmds[tex_info.tex_num as usize];
 			for e in 2..surf.num_edges
 			{
