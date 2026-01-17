@@ -1,7 +1,7 @@
 #!/bin/bash
 
 DIR="$(dirname "$0")"
-set -o allexport && source .env && set +o allexport
+#set -o allexport && source .env && set +o allexport
 
 cargo build "$@"
 #cargo flamegraph -p game
