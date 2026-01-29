@@ -4,6 +4,8 @@ use transport::Transport;
 mod bsp;
 use bsp::*;
 
+mod bsp_entity;
+
 mod bsp_render;
 use bsp_render::*;
 
@@ -34,8 +36,8 @@ async fn main() -> Result<(), Box<dyn Error>>
         .build();
 
     let transport = Transport::new(gns_global.clone(), Ipv4Addr::LOCALHOST.into(), 27821).expect("connection failed");
-	let bsp = load_bsp("assets/qbj3_chaosed0.bsp");
-	//let bsp = load_bsp("assets/box.bsp");
+	//let bsp = load_bsp("assets/qbj3_chaosed0.bsp");
+	let bsp = load_bsp("assets/box.bsp");
 	let mut bsp_render = BspRender::new();
 
 	bsp_render.load_skybox("assets/skybox/mak_cloudysky5");
@@ -98,11 +100,13 @@ async fn main() -> Result<(), Box<dyn Error>>
 
 	//let mut time = 0f32;
 
-	//println!("ENTITIES: {:?}", bsp.entities);
+	println!("ENTITIES: {:?}", bsp.entities);
 
 	rl.set_target_fps(60);
 
-	let mut cam = Camera3D::perspective(Vector3::ZERO, Vector3::Z, Vector3::Y, 60f32);
+    let origin_str = "origin".to_string();
+    let pos = bsp_entity::of_type(&bsp, "info_player_start").next().unwrap().get_vec3(&origin_str);
+	let mut cam = Camera3D::perspective(pos, Vector3::Z, Vector3::Y, 60f32);
 
 	rl.disable_cursor();
 	rl.set_exit_key(None);

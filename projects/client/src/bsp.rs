@@ -1,9 +1,12 @@
 use raylib::core::math::*;
+use raylib::prelude::*;
 use std::fs::File;
 use std::path::Path;
 use std::io::prelude::*;
 use std::io::BufReader;
+use std::str::FromStr;
 use std::collections::HashSet;
+use std::collections::HashMap;
 use strum_macros::FromRepr;
 
 const BSP2_VER: i32 = (('B' as i32) << 0) | (('S' as i32) << 8) | (('P' as i32) << 16) | (('2' as i32) << 24);
@@ -44,7 +47,7 @@ pub struct Bsp
 	pub mark_surfs: Vec<i32>,
 	pub lit_data: Vec<u8>,
 	pub vis_data: Vec<u8>,
-	pub entities: String,
+	pub entities: Vec<Entity>,
 	pub submodels: Vec<Model>,
 	pub texofs: [usize; 7], // Offset into used_textures for each texture type
 	pub used_textures: Vec<i32>,
@@ -84,6 +87,11 @@ enum ModelType
 	Alias,
 	Sprite,
 	NumTypes,
+}
+
+#[derive(Debug)]
+pub struct Entity {
+    pub map: HashMap<String, String>
 }
 
 struct Model
@@ -292,7 +300,7 @@ pub fn load_bsp(filename: &str) -> Bsp
 	let leafs = read_leafs(header.leaves, &mut reader, &mut buf);
 	let nodes = read_nodes(header.nodes, &mut reader, &mut buf);
 	let clip_nodes = read_clip_nodes(header.clip_nodes, &mut reader, &mut buf);
-	let entities = read_entities(header.entities, &mut reader);
+	let entities = read_entities(header.entities, &mut reader, &mut buf);
 	let submodels = read_submodels(header.models, &mut reader, &mut buf);
 	let (texofs, used_textures) = build_used_textures(&surfaces, &textures, &tex_infos);
 
@@ -794,16 +802,76 @@ fn read_clip_nodes(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut V
 	return nodes;
 }
 
-fn read_entities(header: LumpHeader, reader: &mut BufReader<File>) -> String
+fn read_entities(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Entity>
 {
 	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
 		.unwrap_or_else(|err| panic!("Invalid entities offset {:?}: {err}", header.offset));
-	let mut data = vec![0u8; header.size as usize];
-	reader.read_exact(&mut data)
-		.unwrap_or_else(|err| panic!("Invalid entities size {:?}: {err}", header.size));
 
-	return String::from_utf8(data)
-		.unwrap_or_else(|err: std::string::FromUtf8Error| panic!("Could not obtain utf8 string from entities: {err}"));
+    #[derive(PartialEq, Debug)]
+    enum ParserState {
+        LookingForEntity,
+        LookingForKey,
+        InsideKey,
+        LookingForValue,
+        InsideValue,
+    }
+
+    let mut state = ParserState::LookingForEntity;
+    let mut entity = Entity { map: HashMap::new() };
+    let mut key = vec!();
+    let mut value = vec!();
+    let mut entities = vec!();
+
+    for i in 0..(header.size as usize) {
+        let byte = read_u8(reader, buf);
+
+        if state == ParserState::LookingForEntity {
+            if byte == '{' as u8 {
+                state = ParserState::LookingForKey;
+            } else if byte == '\0' as u8 {
+                assert!(i == (header.size - 1) as usize);
+            } else if !char::is_whitespace(byte.into()) {
+                panic!("Found unexpected character {:?} while outside entity", char::from(byte));
+            }
+        } else if state == ParserState::LookingForKey {
+            if byte == '}' as u8 {
+                entities.push(entity);
+                entity = Entity { map: HashMap::new() };
+                state = ParserState::LookingForEntity;
+            } else if byte == '\"' as u8 {
+                state = ParserState::InsideKey;
+            } else if !char::is_whitespace(byte.into()) {
+                panic!("Found unexpected character {:?} while looking for key", char::from(byte));
+            }
+        } else if state == ParserState::InsideKey {
+            if byte == '\"' as u8 {
+                state = ParserState::LookingForValue;
+            } else {
+                key.push(byte);
+            }
+        } else if state == ParserState::LookingForValue {
+            if byte == '\"' as u8 {
+                state = ParserState::InsideValue;
+            } else if !char::is_whitespace(byte.into()) {
+                panic!("Found unexpected character {:?} while looking for key", char::from(byte));
+            }
+        } else if state == ParserState::InsideValue {
+            if byte == '\"' as u8 {
+                let key_str = String::from_utf8(key).unwrap();
+                let value_str = String::from_utf8(value).unwrap();
+                entity.map.insert(key_str, value_str);
+
+                key = vec!();
+                value = vec!();
+
+                state = ParserState::LookingForKey;
+            } else {
+                value.push(byte);
+            }
+        }
+    }
+
+	return entities;
 }
 
 fn read_submodels(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Model>
@@ -944,4 +1012,12 @@ fn read_string16(reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> String
 fn read_dir_entry(reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> LumpHeader
 {
 	return LumpHeader { offset: read_i32(reader, buf), size: read_i32(reader, buf) };
+}
+
+pub fn to_bsp(point: Vector3) -> Vector3 {
+    return Vector3::new(point.z, point.x, point.y);
+}
+
+pub fn to_wld(point: Vector3) -> Vector3 {
+    return Vector3::new(point.y, point.z, point.x);
 }

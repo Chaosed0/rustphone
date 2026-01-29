@@ -1,14 +1,6 @@
 use raylib::prelude::*;
 use crate::bsp::*;
 
-pub fn wld2bsp(point: Vector3) -> Vector3 {
-    return Vector3::new(point.z, point.x, point.y);
-}
-
-pub fn bsp2wld(point: Vector3) -> Vector3 {
-    return Vector3::new(point.y, point.z, point.x);
-}
-
 pub struct BspQueryNode {
     plane_index: usize,
     children: [i32;2]
@@ -72,8 +64,8 @@ impl<'a> BspQuery<'a> for BspClipQuery<'a> {
     }
 }
 
-pub fn point_intersect<'a, T>(bsp: &'a T, point: Vector3) -> LeafContents where T: BspQuery<'a> {
-    let point = wld2bsp(point);
+pub fn point_intersect<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3) -> LeafContents {
+    let point = to_bsp(point);
     let mut idx = 0;
     loop {
         let node = &bsp.get_node(idx);
@@ -97,20 +89,20 @@ pub fn point_intersect<'a, T>(bsp: &'a T, point: Vector3) -> LeafContents where 
     }
 }
 
-pub fn ray_intersect<'a, T>(bsp: &'a T, point: Vector3, dir: Vector3, dist: f32) -> Option<Vector3> where T: BspQuery<'a> {
-    let point = wld2bsp(point);
-    let dir = wld2bsp(dir).normalize();
+pub fn ray_intersect<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: Vector3, dist: f32) -> Option<Vector3> {
+    let point = to_bsp(point);
+    let dir = to_bsp(dir).normalize();
     //println!("Raycast {:?} {:?} {:?}", point, dir, dist);
     let d = ray_intersect_recursive(bsp, point, dir, dist, 0);
     if let Some(d) = d {
         //println!("  Got back {:?}", d);
-        return Some(bsp2wld(point + dir * d));
+        return Some(to_wld(point + dir * d));
     } else {
         return None;
     }
 }
 
-fn ray_intersect_recursive<'a, T>(bsp: &'a T, point: Vector3, dir: Vector3, dist: f32, idx: i32) -> Option<f32> where T: BspQuery<'a> {
+fn ray_intersect_recursive<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: Vector3, dist: f32, idx: i32) -> Option<f32> {
     if idx < 0 {
         let contents = bsp.get_contents(idx);
         if contents == LeafContents::Empty {
