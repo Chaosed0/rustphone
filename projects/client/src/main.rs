@@ -17,6 +17,9 @@ use palette::PALETTE;
 
 mod bsp_query;
 
+mod player;
+use player::Player;
+
 use std::ffi::c_void;
 use raylib::prelude::*;
 use gns::GnsGlobal;
@@ -37,7 +40,7 @@ async fn main() -> Result<(), Box<dyn Error>>
 
     let transport = Transport::new(gns_global.clone(), Ipv4Addr::LOCALHOST.into(), 27821).expect("connection failed");
 	//let bsp = load_bsp("assets/qbj3_chaosed0.bsp");
-	let bsp = load_bsp("assets/box.bsp");
+	let bsp = load_bsp("assets/qbj3_chaosed0.bsp");
 	let mut bsp_render = BspRender::new();
 
 	bsp_render.load_skybox("assets/skybox/mak_cloudysky5");
@@ -105,8 +108,10 @@ async fn main() -> Result<(), Box<dyn Error>>
 	rl.set_target_fps(60);
 
     let origin_str = "origin".to_string();
+	let mut cam = Camera3D::perspective(Vector3::ZERO, Vector3::Z, Vector3::Y, 60f32);
+
     let pos = bsp_entity::of_type(&bsp, "info_player_start").next().unwrap().get_vec3(&origin_str);
-	let mut cam = Camera3D::perspective(pos, Vector3::Z, Vector3::Y, 60f32);
+    let mut player = Player::new(pos + Vector3::Y);
 
 	rl.disable_cursor();
 	rl.set_exit_key(None);
@@ -118,14 +123,14 @@ async fn main() -> Result<(), Box<dyn Error>>
     let bsp_clipq = bsp_query::BspClipQuery::new(&bsp);
 
     while !rl.window_should_close() {
-		//let delta = rl.get_frame_time();
+		let dt = rl.get_frame_time();
 
 		if rl.is_key_pressed(KeyboardKey::KEY_ESCAPE) {
 			rl.enable_cursor();
 		}
 
 		if rl.is_cursor_hidden() {
-			update_camera(&mut rl, &mut cam);
+			poll_input(&mut rl, &mut player);
 		} else if rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT) {
 			rl.disable_cursor();
 		}
@@ -144,7 +149,9 @@ async fn main() -> Result<(), Box<dyn Error>>
         transport.poll_messages(message_handler);
         gns_global.poll_callbacks();
 
-		//time += delta;
+        player.update(&bsp_clipq, dt);
+        cam.position = player.pos + Vector3::Y * 16f32;
+        cam.target = cam.position + player.forward();
 
         let mut d = rl.begin_drawing(&thread);
 
@@ -203,36 +210,34 @@ fn image_from_pixels(pixels: Vec<u8>, width: u32, height: u32, format: PixelForm
 	}
 }
 
-fn update_camera(rl: &mut RaylibHandle, camera : &mut Camera)
+fn poll_input(rl: &mut RaylibHandle, player : &mut Player)
 {
-	const CAMERA_MOVE_SPEED: f32 = 256f32;
-	const CAMERA_ROTATION_SPEED: f32 = 0.1f32;
+	const ROT_SPEED: f32 = 0.5f32;
 
     let mouse_delta = rl.get_mouse_delta();
-	let delta = rl.get_frame_time();
+	let dt = rl.get_frame_time();
+    let rot_speed = ROT_SPEED * dt;
 
-    // Camera speeds based on frame time
-    let mut speed = CAMERA_MOVE_SPEED * delta;
-    let rot_speed = CAMERA_ROTATION_SPEED * delta;
+	player.yaw -= mouse_delta.x * rot_speed;
+	player.pitch -= mouse_delta.y * rot_speed;
 
-	let mut forward = (camera.target - camera.position).try_normalize().unwrap();
-	let up = camera.up;
-	let right = forward.cross(up).try_normalize().unwrap();
+    let mut movement = Vector3::ZERO;
 
-	forward = forward.rotate_axis(up, -mouse_delta.x * rot_speed);
-	forward = forward.rotate_axis(right, -mouse_delta.y * rot_speed);
+	if rl.is_key_down(KeyboardKey::KEY_W) { movement.z -= 1f32; }
+	if rl.is_key_down(KeyboardKey::KEY_A) { movement.x -= 1f32; }
+	if rl.is_key_down(KeyboardKey::KEY_S) { movement.z += 1f32; }
+	if rl.is_key_down(KeyboardKey::KEY_D) { movement.x += 1f32; }
+	if rl.is_key_down(KeyboardKey::KEY_SPACE) { movement.y += 1f32; }
+	if rl.is_key_down(KeyboardKey::KEY_Q) { movement.y += 1f32; }
+	if rl.is_key_down(KeyboardKey::KEY_LEFT_CONTROL) { movement.y -= 1f32; }
+	if rl.is_key_down(KeyboardKey::KEY_E) { movement.y -= 1f32; }
 
-	if rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT) { speed *= 3f32; }
-	if rl.is_key_down(KeyboardKey::KEY_W) { camera.position += forward * speed; }
-	if rl.is_key_down(KeyboardKey::KEY_A) { camera.position -= right * speed; }
-	if rl.is_key_down(KeyboardKey::KEY_S) { camera.position -= forward * speed; }
-	if rl.is_key_down(KeyboardKey::KEY_D) { camera.position += right * speed; }
-	if rl.is_key_down(KeyboardKey::KEY_SPACE) { camera.position += up * speed; }
-	if rl.is_key_down(KeyboardKey::KEY_Q) { camera.position += up * speed; }
-	if rl.is_key_down(KeyboardKey::KEY_LEFT_CONTROL) { camera.position += up * speed; }
-	if rl.is_key_down(KeyboardKey::KEY_E) { camera.position -= up * speed; }
+    player.movement = movement;
 
-	camera.target = camera.position + forward;
+    if rl.is_key_pressed(KeyboardKey::KEY_SPACE) { player.jump = true; }
+    player.sprint = rl.is_key_down(KeyboardKey::KEY_LEFT_SHIFT);
+
+    if rl.is_key_pressed(KeyboardKey::KEY_ZERO) { player.free_move = !player.free_move; }
 }
 
 fn message_handler(_msg: Message) {

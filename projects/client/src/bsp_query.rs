@@ -91,7 +91,11 @@ pub fn point_intersect<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3) -> LeafCo
 
 pub fn ray_intersect<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: Vector3, dist: f32) -> Option<Vector3> {
     let point = to_bsp(point);
-    let dir = to_bsp(dir).normalize();
+    let dir = to_bsp(dir);
+    
+    if dir.length() < 0.0001f32 { return Some(point); }
+
+    let dir = dir.normalize();
     //println!("Raycast {:?} {:?} {:?}", point, dir, dist);
     let d = ray_intersect_recursive(bsp, point, dir, dist, 0);
     if let Some(d) = d {
