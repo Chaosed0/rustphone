@@ -9,13 +9,75 @@ pub fn bsp2wld(point: Vector3) -> Vector3 {
     return Vector3::new(point.y, point.z, point.x);
 }
 
-pub fn get_leaf_containing_point(bsp: &Bsp, point: Vector3) -> &Leaf {
+pub struct BspQueryNode {
+    plane_index: usize,
+    children: [i32;2]
+}
+
+pub trait BspQuery<'a> {
+    fn get_node(&self, idx: usize) -> BspQueryNode;
+    fn get_plane(&self, idx: usize) -> &Plane;
+    fn get_contents(&self, idx: i32) -> LeafContents;
+}
+
+pub struct BspVisQuery<'a> {
+    bsp: &'a Bsp
+}
+
+impl<'a> BspVisQuery<'a> {
+    pub fn new(bsp: &'a Bsp) -> BspVisQuery<'a> {
+        return BspVisQuery { bsp };
+    }
+}
+
+
+impl<'a> BspQuery<'a> for BspVisQuery<'a> {
+    fn get_node(&self, idx: usize) -> BspQueryNode {
+        let node = &self.bsp.nodes[idx];
+        return BspQueryNode { plane_index: node.plane_index as usize, children: node.children };
+    }
+
+    fn get_plane(&self, idx: usize) -> &'a Plane {
+        return &self.bsp.planes[idx];
+    }
+
+    fn get_contents(&self, idx: i32) -> LeafContents {
+        return self.bsp.leafs[-(idx+1) as usize].contents;
+    }
+}
+
+pub struct BspClipQuery<'a> {
+    bsp: &'a Bsp
+}
+
+impl<'a> BspClipQuery<'a> {
+    pub fn new(bsp: &'a Bsp) -> BspClipQuery<'a> {
+        return BspClipQuery { bsp };
+    }
+}
+
+
+impl<'a> BspQuery<'a> for BspClipQuery<'a> {
+    fn get_node(&self, idx: usize) -> BspQueryNode {
+        let node = &self.bsp.clip_nodes[idx];
+        return BspQueryNode { plane_index: node.plane_index as usize, children: node.children };
+    }
+
+    fn get_plane(&self, idx: usize) -> &'a Plane {
+        return &self.bsp.planes[idx];
+    }
+
+    fn get_contents(&self, idx: i32) -> LeafContents {
+        return LeafContents::from_repr(idx).unwrap();
+    }
+}
+
+pub fn point_intersect<'a, T>(bsp: &'a T, point: Vector3) -> LeafContents where T: BspQuery<'a> {
     let point = wld2bsp(point);
     let mut idx = 0;
-    let mut i = 0;
     loop {
-        let node = &bsp.nodes[idx];
-        let plane = &bsp.planes[node.plane_index as usize];
+        let node = &bsp.get_node(idx);
+        let plane = &bsp.get_plane(node.plane_index);
         let d = point.dot(plane.normal) - plane.dist;
 
         let next_idx = if d > 0f32 {
@@ -28,38 +90,14 @@ pub fn get_leaf_containing_point(bsp: &Bsp, point: Vector3) -> &Leaf {
 
         if next_idx < 0 {
             //println!("  got leaf at {:?}", -(next_idx + 1));
-            return &bsp.leafs[-(next_idx + 1) as usize];
-        } else {
-            idx = next_idx as usize;
-        }
-
-        i += 1;
-    }
-}
-
-pub fn point_intersect(bsp: &Bsp, point: Vector3) -> LeafContents {
-    let point = wld2bsp(point);
-    let mut idx = 0;
-    loop {
-        let node = &bsp.clip_nodes[idx];
-        let plane = &bsp.planes[node.plane_index as usize];
-        let d = point.dot(plane.normal) - plane.dist;
-
-        let next_idx = if d > 0f32 {
-            node.children[0]
-        } else {
-            node.children[1]
-        };
-
-        if next_idx < 0 {
-            return LeafContents::from_repr(next_idx).unwrap();
+            return bsp.get_contents(next_idx as i32);
         } else {
             idx = next_idx as usize;
         }
     }
 }
 
-pub fn ray_intersect(bsp: &Bsp, point: Vector3, dir: Vector3, dist: f32) -> Option<Vector3> {
+pub fn ray_intersect<'a, T>(bsp: &'a T, point: Vector3, dir: Vector3, dist: f32) -> Option<Vector3> where T: BspQuery<'a> {
     let point = wld2bsp(point);
     let dir = wld2bsp(dir).normalize();
     //println!("Raycast {:?} {:?} {:?}", point, dir, dist);
@@ -72,9 +110,9 @@ pub fn ray_intersect(bsp: &Bsp, point: Vector3, dir: Vector3, dist: f32) -> Opti
     }
 }
 
-fn ray_intersect_recursive(bsp: &Bsp, point: Vector3, dir: Vector3, dist: f32, idx: i32) -> Option<f32> {
+fn ray_intersect_recursive<'a, T>(bsp: &'a T, point: Vector3, dir: Vector3, dist: f32, idx: i32) -> Option<f32> where T: BspQuery<'a> {
     if idx < 0 {
-        let contents = LeafContents::from_repr(idx).unwrap();
+        let contents = bsp.get_contents(idx);
         if contents == LeafContents::Empty {
             return None;
         } else {
@@ -83,8 +121,8 @@ fn ray_intersect_recursive(bsp: &Bsp, point: Vector3, dir: Vector3, dist: f32, i
     }
 
     loop {
-        let node = &bsp.clip_nodes[idx as usize];
-        let plane = &bsp.planes[node.plane_index as usize];
+        let node = &bsp.get_node(idx as usize);
+        let plane = &bsp.get_plane(node.plane_index as usize);
         let d = point.dot(plane.normal) - plane.dist;
         let n = dir.dot(plane.normal);
 

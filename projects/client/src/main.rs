@@ -110,6 +110,9 @@ async fn main() -> Result<(), Box<dyn Error>>
     let mut raycast_position = None;
     let mut raycast_end = None;
 
+    let bsp_visq = bsp_query::BspVisQuery::new(&bsp);
+    let bsp_clipq = bsp_query::BspClipQuery::new(&bsp);
+
     while !rl.window_should_close() {
 		//let delta = rl.get_frame_time();
 
@@ -126,7 +129,7 @@ async fn main() -> Result<(), Box<dyn Error>>
 		if rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT) {
             raycast_position = Some(cam.position);
             let raycast_dir = cam.target - cam.position;
-            let rend = bsp_query::ray_intersect(&bsp, raycast_position.unwrap(), raycast_dir, f32::INFINITY);
+            let rend = bsp_query::ray_intersect(&bsp_clipq, raycast_position.unwrap(), raycast_dir, f32::INFINITY);
             raycast_end = Some(rend.unwrap_or(raycast_position.unwrap() + raycast_dir * 9999f32));
             //println!("{:?}->{:?}", raycast_position, raycast_end);
 		}
