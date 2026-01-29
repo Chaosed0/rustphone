@@ -466,7 +466,7 @@ fn read_planes(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u
 			if normal.z < 0f32 { 1 << 2 } else { 0 };
 
 		let dist = read_f32(reader, buf);
-		let p_type = read_u8(reader, buf);
+		let p_type = read_i32(reader, buf) as u8;
 
 		planes.push(Plane { normal, dist, p_type, sign: bits, _pad0: 0, _pad1: 0 });
 	}

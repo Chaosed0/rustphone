@@ -34,7 +34,7 @@ async fn main() -> Result<(), Box<dyn Error>>
         .build();
 
     let transport = Transport::new(gns_global.clone(), Ipv4Addr::LOCALHOST.into(), 27821).expect("connection failed");
-	let bsp = load_bsp("assets/qbj3_chaosed0.bsp");
+	let bsp = load_bsp("assets/box.bsp");
 	//let bsp = load_bsp("assets/box.bsp");
 	let mut bsp_render = BspRender::new();
 
@@ -107,13 +107,7 @@ async fn main() -> Result<(), Box<dyn Error>>
 	rl.disable_cursor();
 	rl.set_exit_key(None);
 
-    //let leaf = bsp_query::get_leaf_containing_point(&bsp, Vector3::new(0f32, 0f32, 2f32));
-
-    //println!("LEAF0: {:?} {:?} {:?} {:?}", leaf.contents, leaf.firstmarksurface, leaf.nummarksurfaces, leaf.visofs);
-
-    //let leaf = bsp_query::get_leaf_containing_point(&bsp, Vector3::new(0f32, 0f32, -2f32));
-
-    //println!("LEAF1: {:?} {:?} {:?} {:?}", leaf.contents, leaf.firstmarksurface, leaf.nummarksurfaces, leaf.visofs);
+    print_bsp_tree(&bsp, 0, 0);
 
     while !rl.window_should_close() {
 		//let delta = rl.get_frame_time();
@@ -128,6 +122,9 @@ async fn main() -> Result<(), Box<dyn Error>>
 		else if rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT) {
 			rl.disable_cursor();
 		}
+
+        let leaf = bsp_query::get_leaf_containing_point(&bsp, cam.position);
+        println!("LEAF {:?}: {:?} {:?} {:?} {:?}", cam.position, leaf.contents, leaf.firstmarksurface, leaf.nummarksurfaces, leaf.visofs);
 
         transport.poll_messages(message_handler);
         gns_global.poll_callbacks();
@@ -218,4 +215,18 @@ fn update_camera(rl: &mut RaylibHandle, camera : &mut Camera)
 }
 
 fn message_handler(_msg: Message) {
+}
+
+fn print_bsp_tree(bsp: &Bsp, idx: i32, ind: usize) {
+    let spc = " ".repeat(ind);
+
+    if idx < 0 {
+        println!("{spc} {idx}: LEAF {:?}", bsp.leafs[-(idx + 1) as usize].contents);
+    } else {
+        let node = &bsp.nodes[idx as usize];
+        let plane = &bsp.planes[node.plane_index as usize];
+        println!("{spc} {idx}: NODE {:?} {:?}", plane.normal, plane.dist);
+        print_bsp_tree(bsp, node.children[0], ind + 1);
+        print_bsp_tree(bsp, node.children[1], ind + 1);
+    }
 }

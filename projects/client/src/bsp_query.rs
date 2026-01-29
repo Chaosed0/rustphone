@@ -11,8 +11,11 @@ const CONTENTS_ORIGIN: i32 = -7;
 const CONTENTS_CLIP: i32 = -8;
 
 pub fn get_leaf_containing_point(bsp: &Bsp, point: Vector3) -> &Leaf {
-    let mut node = &bsp.nodes[0];
+    let point = Vector3::new(point.z, point.x, point.y);
+    let mut idx = 0;
+    let mut i = 0;
     loop {
+        let node = &bsp.nodes[idx];
         let plane = &bsp.planes[node.plane_index as usize];
         let d = point.dot(plane.normal) - plane.dist;
 
@@ -22,10 +25,15 @@ pub fn get_leaf_containing_point(bsp: &Bsp, point: Vector3) -> &Leaf {
             node.children[1]
         };
 
+        println!("  iter {:?}: {:?} -- {:?} {:?} {:?} {:?}", i, next_idx, idx, d, plane.normal, plane.dist);
+
         if next_idx < 0 {
-            return &bsp.leafs[(-(next_idx)+1) as usize];
+            println!("  got leaf at {:?}", -(next_idx + 1));
+            return &bsp.leafs[-(next_idx + 1) as usize];
         } else {
-            node = &bsp.nodes[next_idx as usize];
+            idx = next_idx as usize;
         }
+
+        i += 1;
     }
 }
