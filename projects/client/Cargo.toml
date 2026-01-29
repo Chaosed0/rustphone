@@ -11,5 +11,7 @@ glow = "0.16.0"
 itertools = "0.14.0"
 raylib = { git = "https://github.com/raylib-rs/raylib-rs.git", rev = "c574449", features = ["SUPPORT_FILEFORMAT_TGA"] }
 shared = { version = "0.1.0", path = "../shared" }
+strum = "0.27.2"
+strum_macros = "0.27.2"
 texture_packer = "0.30.0"
 tokio = { version = "1.49.0", features = ["full"] }

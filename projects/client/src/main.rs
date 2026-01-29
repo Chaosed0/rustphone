@@ -34,7 +34,7 @@ async fn main() -> Result<(), Box<dyn Error>>
         .build();
 
     let transport = Transport::new(gns_global.clone(), Ipv4Addr::LOCALHOST.into(), 27821).expect("connection failed");
-	let bsp = load_bsp("assets/box.bsp");
+	let bsp = load_bsp("assets/qbj3_chaosed0.bsp");
 	//let bsp = load_bsp("assets/box.bsp");
 	let mut bsp_render = BspRender::new();
 
@@ -107,7 +107,8 @@ async fn main() -> Result<(), Box<dyn Error>>
 	rl.disable_cursor();
 	rl.set_exit_key(None);
 
-    print_bsp_tree(&bsp, 0, 0);
+    let mut raycast_position = None;
+    let mut raycast_end = None;
 
     while !rl.window_should_close() {
 		//let delta = rl.get_frame_time();
@@ -118,13 +119,20 @@ async fn main() -> Result<(), Box<dyn Error>>
 
 		if rl.is_cursor_hidden() {
 			update_camera(&mut rl, &mut cam);
-		}
-		else if rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT) {
+		} else if rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT) {
 			rl.disable_cursor();
 		}
 
-        let leaf = bsp_query::get_leaf_containing_point(&bsp, cam.position);
-        println!("LEAF {:?}: {:?} {:?} {:?} {:?}", cam.position, leaf.contents, leaf.firstmarksurface, leaf.nummarksurfaces, leaf.visofs);
+		if rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT) {
+            raycast_position = Some(cam.position);
+            let raycast_dir = cam.target - cam.position;
+            let rend = bsp_query::ray_intersect(&bsp, raycast_position.unwrap(), raycast_dir, f32::INFINITY);
+            raycast_end = Some(rend.unwrap_or(raycast_position.unwrap() + raycast_dir * 9999f32));
+            //println!("{:?}->{:?}", raycast_position, raycast_end);
+		}
+
+        //let leaf = bsp_query::get_leaf_containing_point(&bsp, cam.position);
+        //println!("LEAF {:?}: {:?} {:?} {:?} {:?}", cam.position, leaf.contents, leaf.firstmarksurface, leaf.nummarksurfaces, leaf.visofs);
 
         transport.poll_messages(message_handler);
         gns_global.poll_callbacks();
@@ -138,11 +146,17 @@ async fn main() -> Result<(), Box<dyn Error>>
 		//unsafe { raylib::ffi::rlDisableBackfaceCulling() };
 		unsafe { raylib::ffi::rlSetClipPlanes(1f64, 100000f64) };
 
-		d.draw_mode3D(cam, |_|
+		d.draw_mode3D(cam, |mut d3d|
 		{
 			let modelview: Matrix = unsafe { raylib::ffi::rlGetMatrixModelview().try_into().unwrap() };
 			let projection: Matrix = unsafe { raylib::ffi::rlGetMatrixProjection().try_into().unwrap() };
 			bsp_render.render(&textures, &lightmaps, &bsp, modelview * projection, cam);
+
+            if let Some(end) = raycast_end &&
+                let Some(pos) = raycast_position {
+                d3d.draw_sphere_wires(end, 4f32, 8, 8, Color::ORANGE); 
+                d3d.draw_ray(Ray::new(pos, end - pos), Color::RED);
+            }
 		});
 
 		d.draw_texture_ex(&lightmaps[0], Vector2::new(10f32, 10f32), 0f32, 0.2f32, Color::WHITE);

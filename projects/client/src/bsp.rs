@@ -4,6 +4,7 @@ use std::path::Path;
 use std::io::prelude::*;
 use std::io::BufReader;
 use std::collections::HashSet;
+use strum_macros::FromRepr;
 
 const BSP2_VER: i32 = (('B' as i32) << 0) | (('S' as i32) << 8) | (('P' as i32) << 16) | (('2' as i32) << 24);
 const LIT_VER: i32 = (('Q' as i32) << 0) | (('L' as i32) << 8) | (('I' as i32) << 16) | (('T' as i32) << 24);
@@ -119,9 +120,22 @@ pub struct Plane
 	_pad1: u8
 }
 
+#[derive(FromRepr, Debug, Clone, Copy, PartialEq)]
+#[repr(i32)]
+pub enum LeafContents {
+    Empty = -1,
+    Solid = -2,
+    Water = -3,
+    Slime = -4,
+    Lava = -5,
+    Sky = -6,
+    Origin = -7,
+    Clip = -8
+}
+
 pub struct Leaf
 {
-	pub contents: i32,
+	pub contents: LeafContents,
 	pub visofs: i32, // -1 = no visibility info
 
 	pub mins: [u32; 3], // for frustum culling
@@ -194,7 +208,7 @@ pub struct Surface
 
 pub struct ClipNode
 {
-	pub plane_num: i32,
+	pub plane_index: i32,
 	pub children: [i32;2] // negatives are contents
 }
 
@@ -723,7 +737,8 @@ fn read_leafs(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8
 
 	for _ in 0..count
 	{
-		let contents = read_i32(reader, buf);
+        let contents_i = read_i32(reader, buf); 
+		let contents = LeafContents::from_repr(contents_i).unwrap();
 		let visofs = read_i32(reader, buf);
 		let mins = [read_u32(reader, buf), read_u32(reader, buf), read_u32(reader, buf)];
 		let maxs = [read_u32(reader, buf), read_u32(reader, buf), read_u32(reader, buf)];
@@ -769,11 +784,11 @@ fn read_clip_nodes(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut V
 
 	for _ in 0..count
 	{
-		let plane_num = read_i32(reader, buf);
+		let plane_index = read_i32(reader, buf);
 		let child0 = read_i32(reader, buf);
 		let child1 = read_i32(reader, buf);
 
-		nodes.push(ClipNode { plane_num, children: [child0, child1] });
+		nodes.push(ClipNode { plane_index, children: [child0, child1] });
 	}
 
 	return nodes;
