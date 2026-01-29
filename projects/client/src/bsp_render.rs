@@ -1,6 +1,6 @@
 use raylib::prelude::*;
 use crate::bsp::{self, Bsp};
-use crate::lit::{LightmapData, SurfLightmapData};
+use crate::lit::LightmapData;
 use glow::*;
 use ::core::ffi::c_void;
 use ::core::num::NonZeroU32;
@@ -144,7 +144,7 @@ impl BspRender
 		let mut indexes = vec![0u32; (numtris * 3) as usize];
 		let mut cmds = Vec::<DrawElementsIndirectCommand>::new();
 
-		for tex in &bsp.textures
+		for _ in &bsp.textures
 		{
 			//println!("TEX-CMD {:?}", tex.name);
 			cmds.push(DrawElementsIndirectCommand { count: 0, instanceCount: 1, firstIndex: 0, baseVertex: 0, baseInstance: 0 })
@@ -242,10 +242,12 @@ impl BspRender
 			sum += cmd.count;
 		}
 
+        /*
 		for (cmd, tex) in cmds.iter().zip(&bsp.textures)
 		{
 			println!("tex has {:?} cmds", cmd.count)
 		}
+        */
 
 		unsafe
 		{
@@ -346,7 +348,7 @@ impl BspRender
 		return match self.data { Some(_) => true, None => false };
 	}
 
-	pub fn render(&self, textures: &Vec<Texture2D>, lightmaps: &Vec<Texture2D>, bsp: &Bsp, light_data: &Vec<Option<SurfLightmapData>>, mvp: Matrix, camera: Camera, time: f32)
+	pub fn render(&self, textures: &Vec<Texture2D>, lightmaps: &Vec<Texture2D>, bsp: &Bsp, mvp: Matrix, camera: Camera)
 	{
 		let data = match &self.data { Some(v) => v, None => return };
 

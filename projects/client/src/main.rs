@@ -1,5 +1,4 @@
 mod transport;
-use raylib::ffi::CSSPalette;
 use transport::Transport;
 
 mod bsp;
@@ -14,13 +13,14 @@ use lit::*;
 mod palette;
 use palette::PALETTE;
 
-use std::{f32::consts::PI, ffi::c_void};
+mod bsp_query;
+
+use std::ffi::c_void;
 use raylib::prelude::*;
 use gns::GnsGlobal;
 use std::net::Ipv4Addr;
 use shared::Message;
 use std::error::Error;
-use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>>
@@ -82,7 +82,7 @@ async fn main() -> Result<(), Box<dyn Error>>
 		textures.into_iter().map(|t| t.unwrap()).collect::<Vec<Texture2D>>()
 	};
 
-	let mut light_data = pack_lightmaps(&bsp);
+	let light_data = pack_lightmaps(&bsp);
 	bsp_render.build_buffers(&bsp, &light_data);
 
 	let lightmaps = light_data.lightmaps.into_iter().map(|lm|
@@ -96,7 +96,7 @@ async fn main() -> Result<(), Box<dyn Error>>
 			return tex;
 		}).collect::<Vec<Texture2D>>();
 
-	let mut time = 0f32;
+	//let mut time = 0f32;
 
 	//println!("ENTITIES: {:?}", bsp.entities);
 
@@ -107,14 +107,16 @@ async fn main() -> Result<(), Box<dyn Error>>
 	rl.disable_cursor();
 	rl.set_exit_key(None);
 
-    while !rl.window_should_close() {
-		let delta = rl.get_frame_time();
+    //let leaf = bsp_query::get_leaf_containing_point(&bsp, Vector3::new(0f32, 0f32, 2f32));
 
-		/*
-		const DIST: f32 = 2f32;
-		cam.position = Vector3::new(DIST * angle.sin(), 0f32, DIST * angle.cos());
-		angle += delta * PI * 0.5;
-		*/
+    //println!("LEAF0: {:?} {:?} {:?} {:?}", leaf.contents, leaf.firstmarksurface, leaf.nummarksurfaces, leaf.visofs);
+
+    //let leaf = bsp_query::get_leaf_containing_point(&bsp, Vector3::new(0f32, 0f32, -2f32));
+
+    //println!("LEAF1: {:?} {:?} {:?} {:?}", leaf.contents, leaf.firstmarksurface, leaf.nummarksurfaces, leaf.visofs);
+
+    while !rl.window_should_close() {
+		//let delta = rl.get_frame_time();
 
 		if rl.is_key_pressed(KeyboardKey::KEY_ESCAPE) {
 			rl.enable_cursor();
@@ -130,7 +132,7 @@ async fn main() -> Result<(), Box<dyn Error>>
         transport.poll_messages(message_handler);
         gns_global.poll_callbacks();
 
-		time += delta;
+		//time += delta;
 
         let mut d = rl.begin_drawing(&thread);
 
@@ -139,14 +141,14 @@ async fn main() -> Result<(), Box<dyn Error>>
 		//unsafe { raylib::ffi::rlDisableBackfaceCulling() };
 		unsafe { raylib::ffi::rlSetClipPlanes(1f64, 100000f64) };
 
-		d.draw_mode3D(cam, |mut d3d|
+		d.draw_mode3D(cam, |_|
 		{
 			let modelview: Matrix = unsafe { raylib::ffi::rlGetMatrixModelview().try_into().unwrap() };
 			let projection: Matrix = unsafe { raylib::ffi::rlGetMatrixProjection().try_into().unwrap() };
-			bsp_render.render(&textures, &lightmaps, &bsp, &light_data.surf_data, modelview * projection, cam, time);
+			bsp_render.render(&textures, &lightmaps, &bsp, modelview * projection, cam);
 		});
 
-		d.draw_texture_ex(&lightmaps[0], Vector2::new(10f32, 10f32), 0f32, 0.25f32, Color::WHITE);
+		d.draw_texture_ex(&lightmaps[0], Vector2::new(10f32, 10f32), 0f32, 0.2f32, Color::WHITE);
 
 		d.draw_fps(10, 10);
     }

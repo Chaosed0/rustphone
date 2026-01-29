@@ -1,5 +1,4 @@
 use raylib::core::math::*;
-use std::any::Any;
 use std::fs::File;
 use std::path::Path;
 use std::io::prelude::*;
@@ -483,7 +482,7 @@ fn read_texinfo(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<
 	let count = header.size as usize / size_of::<TexInfo>();
 	let mut missing = 0;
 
-	for i in 0..count
+	for _ in 0..count
 	{
 		let v0 = read_vec3(reader, buf);
 		let ofs_x = read_f32(reader, buf);
