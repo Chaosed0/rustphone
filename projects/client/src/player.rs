@@ -5,7 +5,7 @@ use crate::bsp_query::BspQuery;
 const MOVE_SPEED: f32 = 256f32;
 const JUMP_SPEED: f32 = 300f32;
 const GRAVITY: f32 = 550f32;
-const DEPEN: f32 = 0.1f32;
+const DEPEN: f32 = 0.01f32;
 
 pub struct Player {
     pub movement: Vector3,
@@ -71,14 +71,24 @@ impl Player {
         if self.is_grounded || self.y_speed <= 0f32 {
             let intersect = bsp_query::ray_intersect(bsp, self.pos, -Vector3::Y, 0.1f32);
 
+			//println!("Grounded Check: {:?} {:?}", self.y_speed, intersect);
+
             if let Some(intersect) = intersect {
-                self.is_grounded = true;
-                self.y_speed = 0f32;
-                self.pos = intersect + Vector3::Y * DEPEN;
-            }
+				if !self.is_grounded {
+					//println!("BECAME GROUNDED");
+					self.is_grounded = true;
+					self.y_speed = 0f32;
+					self.pos = intersect + Vector3::Y * DEPEN;
+				}
+            } else {
+				if self.is_grounded {
+					//println!("BECAME UNGROUNDED");
+					self.is_grounded = false;
+				}
+			}
         }
 
-        // Y Movement + gravity
+        // Y Movement
         if self.y_speed.abs() > 0.01f32 {
             let y_delta = self.y_speed.abs() * dt;
             let dir = Vector3::Y * self.y_speed.signum();
@@ -96,8 +106,12 @@ impl Player {
             }
 
             self.pos = new_pos;
-            self.y_speed -= GRAVITY * dt;
         }
+
+		// Gravity
+		if !self.is_grounded {
+            self.y_speed -= GRAVITY * dt;
+		}
 
         // Jump handling
         if self.jump {
@@ -106,7 +120,7 @@ impl Player {
             if self.is_grounded {
                 self.is_grounded = false;
                 self.y_speed = JUMP_SPEED;
-                //println!("Begin Jump {:?}", self.y_speed);
+                println!("Begin Jump {:?}", self.y_speed);
             }
         }
     }

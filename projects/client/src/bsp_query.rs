@@ -124,6 +124,47 @@ fn ray_intersect_recursive<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: 
 
         let dist_to_plane = (d / n).abs();
 
+		// If the point is on the plane, then we need some special handling
+		if d.abs() < 0.01f32 {
+			// If the direction is pointing into or away from the plane, then use the corresponding child
+			if n > 0.01f32 {
+				//println!("  On plane facing away from it, using node {:?}", node.children[0]);
+				return ray_intersect_recursive(bsp, point, dir, dist, node.children[0]);
+			} else if n < -0.01f32 {
+				//println!("  On plane facing into it, using node {:?}", node.children[0]);
+				return ray_intersect_recursive(bsp, point, dir, dist, node.children[1]);
+			} else {
+				//println!("  On plane parallel to it");
+
+				// If the vector is parallel to the plane, then check both sides with a small offset.
+				let d1 = ray_intersect_recursive(bsp, point + plane.normal * 0.01f32, dir, dist, node.children[0]);
+				let d2 = ray_intersect_recursive(bsp, point - plane.normal * 0.01f32, dir, dist, node.children[1]);
+
+				// If we immediately encountered a solid, then ignore it and use the other side's result.
+				// Otherwise, use the closest intersection.
+				if let Some(d1) = d1 {
+					if d1 == 0f32 {
+						//println!("  Intersected child 0, using child 1");
+						return d2;
+					} else if let Some(d2) = d2 {
+						//println!("  Using min of child 0 and 1");
+						return Some(d1.min(d2));
+					} else {
+						//println!("  Using child 0");
+						return Some(d1);
+					}
+				} else if let Some(d2) = d2 {
+					if d2 == 0f32 {
+						//println!("  Intersected child 1, using child 0");
+						return d1;
+					} else {
+						//println!("  Using child 1");
+						return Some(d2);
+					}
+				}
+			}
+		}
+
         let close_child = if d > 0f32 { node.children[0] } else { node.children[1] };
         let far_child = if d > 0f32 { node.children[1] } else { node.children[0] };
 

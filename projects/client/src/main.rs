@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn Error>>
         .build();
 
     let transport = Transport::new(gns_global.clone(), Ipv4Addr::LOCALHOST.into(), 27821).expect("connection failed");
-	//let bsp = load_bsp("assets/qbj3_chaosed0.bsp");
+	//let bsp = load_bsp("assets/box.bsp");
 	let bsp = load_bsp("assets/qbj3_chaosed0.bsp");
 	let mut bsp_render = BspRender::new();
 
@@ -219,14 +219,15 @@ fn poll_input(rl: &mut RaylibHandle, player : &mut Player)
     let rot_speed = ROT_SPEED * dt;
 
 	player.yaw -= mouse_delta.x * rot_speed;
-	player.pitch -= mouse_delta.y * rot_speed;
+	player.pitch += mouse_delta.y * rot_speed;
+	player.pitch = player.pitch.clamp(-89f32, 89f32);
 
     let mut movement = Vector3::ZERO;
 
-	if rl.is_key_down(KeyboardKey::KEY_W) { movement.z -= 1f32; }
-	if rl.is_key_down(KeyboardKey::KEY_A) { movement.x -= 1f32; }
-	if rl.is_key_down(KeyboardKey::KEY_S) { movement.z += 1f32; }
-	if rl.is_key_down(KeyboardKey::KEY_D) { movement.x += 1f32; }
+	if rl.is_key_down(KeyboardKey::KEY_W) { movement.z += 1f32; }
+	if rl.is_key_down(KeyboardKey::KEY_A) { movement.x += 1f32; }
+	if rl.is_key_down(KeyboardKey::KEY_S) { movement.z -= 1f32; }
+	if rl.is_key_down(KeyboardKey::KEY_D) { movement.x -= 1f32; }
 	if rl.is_key_down(KeyboardKey::KEY_SPACE) { movement.y += 1f32; }
 	if rl.is_key_down(KeyboardKey::KEY_Q) { movement.y += 1f32; }
 	if rl.is_key_down(KeyboardKey::KEY_LEFT_CONTROL) { movement.y -= 1f32; }
