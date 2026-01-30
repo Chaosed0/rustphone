@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 byteorder = "1.5.0"
-game-networking-sockets = "0.1.2"
+game-networking-sockets = { git = "https://github.com/hussein-aitlahcen/gns-rs.git", rev = "c6bd44b" }
 gl_loader = "0.1.2"
 glow = "0.16.0"
 itertools = "0.14.0"
