@@ -1,3 +1,5 @@
+use std::f32::consts::PI;
+
 use raylib::prelude::*;
 use crate::bsp_query;
 use crate::bsp_query::BspQuery;
@@ -58,10 +60,28 @@ impl Player {
 
             let intersect = bsp_query::ray_intersect(bsp, self.pos, move_dir, delta);
 
-            let new_pos = match intersect {
-                Some(intersect) => intersect - move_dir * DEPEN,
+            let mut new_pos = match intersect {
+                Some(ref intersect) => intersect.position + intersect.normal * DEPEN,
                 None => self.pos + move_dir * delta
             };
+
+			// If we collided and there is some more distance left in the vector, then slide along the wall in that direction
+			if let Some(ref intersect) = intersect {
+				let remainder = (self.pos + move_dir * delta) - new_pos;
+				let wall_up = intersect.normal.cross(remainder).normalize();
+				let wall_along = intersect.normal.normalize().rotate_axis(wall_up, PI * 0.5f32);
+				let slide_length = wall_along.dot(remainder);
+
+				println!("Attempting slide: {:?} {:?} {:?} {:?} {:?}", intersect, remainder, wall_up, wall_along, slide_length);
+
+				if slide_length > 0.01f32 {
+					let intersect = bsp_query::ray_intersect(bsp, new_pos, wall_along, slide_length);
+					new_pos = match intersect {
+						Some(ref intersect) => intersect.position + intersect.normal * DEPEN,
+						None => new_pos + wall_along * slide_length
+					};
+				}
+			}
 
             //println!("MOVE: {:?} {:?} {:?} {:?} {:?} {:?}->{:?}", forward, right, delta, move_dir, intersect, self.pos, new_pos);
             self.pos = new_pos;
@@ -78,7 +98,7 @@ impl Player {
 					//println!("BECAME GROUNDED");
 					self.is_grounded = true;
 					self.y_speed = 0f32;
-					self.pos = intersect + Vector3::Y * DEPEN;
+					self.pos = intersect.position + intersect.normal * DEPEN;
 				}
             } else {
 				if self.is_grounded {
@@ -95,7 +115,7 @@ impl Player {
             let intersect = bsp_query::ray_intersect(bsp, self.pos, dir, y_delta);
 
             let new_pos = match intersect {
-                Some(intersect) => intersect - dir * DEPEN,
+                Some(ref intersect) => intersect.position + intersect.normal * DEPEN,
                 None => self.pos + dir * y_delta
             };
 

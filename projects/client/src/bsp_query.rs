@@ -1,6 +1,25 @@
 use raylib::prelude::*;
 use crate::bsp::*;
 
+#[derive(PartialEq, Debug)]
+pub struct Intersection {
+	pub position: Vector3,
+	pub normal: Vector3
+}
+
+#[derive(PartialEq, Debug)]
+struct IntersectionInternal {
+	d: f32,
+	data: Option<IntersectData>,
+	contents: LeafContents,
+}
+
+#[derive(PartialEq, Debug)]
+struct IntersectData {
+	plane_index: usize,
+	reverse_normal: bool
+}
+
 pub struct BspQueryNode {
     plane_index: usize,
     children: [i32;2]
@@ -89,82 +108,106 @@ pub fn point_intersect<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3) -> LeafCo
     }
 }
 
-pub fn ray_intersect<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: Vector3, dist: f32) -> Option<Vector3> {
+pub fn ray_intersect_debug<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: Vector3, dist: f32) -> Option<Intersection> {
+	ray_intersect_internal(bsp, point, dir, dist, true)
+}
+
+pub fn ray_intersect<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: Vector3, dist: f32) -> Option<Intersection> {
+	ray_intersect_internal(bsp, point, dir, dist, false)
+}
+
+fn ray_intersect_internal<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: Vector3, dist: f32, debug: bool) -> Option<Intersection> {
     let point = to_bsp(point);
     let dir = to_bsp(dir);
     
-    if dir.length() < 0.0001f32 { return Some(point); }
+    if dir.length() < 0.0001f32 {
+		return Some(Intersection { position: point, normal: Vector3::ZERO });
+	}
 
     let dir = dir.normalize();
-    //println!("Raycast {:?} {:?} {:?}", point, dir, dist);
-    let d = ray_intersect_recursive(bsp, point, dir, dist, 0);
+    if debug { println!("Raycast {:?} {:?} {:?}", point, dir, dist); }
+    let d = ray_intersect_recursive(bsp, point, dir, dist, 0, None, debug);
     if let Some(d) = d {
-        //println!("  Got back {:?}", d);
-        return Some(to_wld(point + dir * d));
+		let normal = d.data.as_ref().map(|data| bsp.get_plane(data.plane_index).normal * if data.reverse_normal { -1f32 } else { 1f32 });
+		let normal = normal.unwrap_or(Vector3::ZERO);
+
+        if debug { println!("  Got back {:?}, normal: {:?}", d, normal); }
+
+        return Some(Intersection { position: to_wld(point + dir * d.d), normal: to_wld(normal) });
     } else {
+        if debug { println!("  No intersection"); }
         return None;
     }
 }
 
-fn ray_intersect_recursive<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: Vector3, dist: f32, idx: i32) -> Option<f32> {
+fn ray_intersect_recursive<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: Vector3, dist: f32, idx: i32, data: Option<IntersectData>, debug: bool) -> Option<IntersectionInternal> {
     if idx < 0 {
         let contents = bsp.get_contents(idx);
+		if debug { println!("  Intersected: {idx} {contents:?}."); }
         if contents == LeafContents::Empty {
             return None;
         } else {
-            return Some(0f32);
+            return Some(IntersectionInternal { d: 0f32, data: data, contents: contents });
         }
     }
 
     loop {
-        let node = &bsp.get_node(idx as usize);
-        let plane = &bsp.get_plane(node.plane_index as usize);
+		let idx = idx as usize;
+        let node = &bsp.get_node(idx);
+		let plane_index = node.plane_index;
+        let plane = bsp.get_plane(plane_index);
         let d = point.dot(plane.normal) - plane.dist;
         let n = dir.dot(plane.normal);
 
         let dist_to_plane = (d / n).abs();
 
-		// If the point is on the plane, then we need some special handling
+		// If the point is on the plane, then we need some special handling.
 		if d.abs() < 0.01f32 {
-			// If the direction is pointing into or away from the plane, then use the corresponding child
+			if debug { println!("  On plane. {idx} {plane_index} {d} {n} {:?} {:?}", plane.normal, plane.dist) }
 			if n > 0.01f32 {
-				//println!("  On plane facing away from it, using node {:?}", node.children[0]);
-				return ray_intersect_recursive(bsp, point, dir, dist, node.children[0]);
+				if debug { println!("  Facing away from it, using node {:?}", node.children[0]); }
+				return ray_intersect_recursive(bsp, point, dir, dist, node.children[0], Some(IntersectData { plane_index, reverse_normal: true }), debug);
 			} else if n < -0.01f32 {
-				//println!("  On plane facing into it, using node {:?}", node.children[0]);
-				return ray_intersect_recursive(bsp, point, dir, dist, node.children[1]);
+				if debug { println!("  Facing into it, using node {:?}", node.children[1]); }
+				return ray_intersect_recursive(bsp, point, dir, dist, node.children[1], Some(IntersectData { plane_index, reverse_normal: false }), debug);
 			} else {
-				//println!("  On plane parallel to it");
+				if debug { println!("  Parallel! First side:"); }
 
-				// If the vector is parallel to the plane, then check both sides with a small offset.
-				let d1 = ray_intersect_recursive(bsp, point + plane.normal * 0.01f32, dir, dist, node.children[0]);
-				let d2 = ray_intersect_recursive(bsp, point - plane.normal * 0.01f32, dir, dist, node.children[1]);
+				let d1 = ray_intersect_recursive(bsp, point + plane.normal * 0.01f32, dir, dist, node.children[0], Some(IntersectData { plane_index, reverse_normal: true }), debug);
+
+				if debug { println!("  Parallel! Second side:"); }
+				let d2 = ray_intersect_recursive(bsp, point - plane.normal * 0.01f32, dir, dist, node.children[1], Some(IntersectData { plane_index, reverse_normal: false }), debug);
 
 				// If we immediately encountered a solid, then ignore it and use the other side's result.
 				// Otherwise, use the closest intersection.
 				if let Some(d1) = d1 {
-					if d1 == 0f32 {
-						//println!("  Intersected child 0, using child 1");
+					if d1.d == 0f32 {
+						if debug { println!("  Intersected child 0, using child 1"); }
 						return d2;
 					} else if let Some(d2) = d2 {
-						//println!("  Using min of child 0 and 1");
-						return Some(d1.min(d2));
+						if debug { println!("  Using min of child 0 and 1"); }
+						if (d1.d < d2.d) {
+							return Some(d1);
+						} else {
+							return Some(d2);
+						}
 					} else {
-						//println!("  Using child 0");
+						if debug { println!("  Using child 0"); }
 						return Some(d1);
 					}
 				} else if let Some(d2) = d2 {
-					if d2 == 0f32 {
-						//println!("  Intersected child 1, using child 0");
+					if d2.d == 0f32 {
+						if debug { println!("  Intersected child 1, using child 0"); }
 						return d1;
 					} else {
-						//println!("  Using child 1");
+						if debug { println!("  Using child 1"); }
 						return Some(d2);
 					}
 				}
 			}
 		}
 
+		let far_reverse_normal = d <= 0f32;
         let close_child = if d > 0f32 { node.children[0] } else { node.children[1] };
         let far_child = if d > 0f32 { node.children[1] } else { node.children[0] };
 
@@ -172,14 +215,15 @@ fn ray_intersect_recursive<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: 
         //  - Direction is facing away from the plane, or
         //  - Direction is facing towards the plane and dist won't reach the plane
         if d.signum() == n.signum() || dist_to_plane > dist {
-            //println!("  Same side. {:?} {:?} {:?} {:?} {:?}", d, n, dist_to_plane, dist, close_child);
-            return ray_intersect_recursive(bsp, point, dir, dist, close_child);
+            if debug { println!("  Same side. {:?} {:?} {:?} {:?} {:?}", d, n, dist_to_plane, dist, close_child); }
+            return ray_intersect_recursive(bsp, point, dir, dist, close_child, data, debug);
         }
 
         // We will intersect this plane, so divide the ray in 2
         // Raycast the closer side
-        let d1 = ray_intersect_recursive(bsp, point, dir, dist_to_plane - 0.01f32, close_child);
-        //println!("  First side {:?} {:?} {:?}", dist_to_plane, node.children[0], d1);
+        if debug { println!("  Split ray {plane_index} {:?} {:?} {d} {n} {dist_to_plane}", plane.normal, plane.dist); }
+        let d1 = ray_intersect_recursive(bsp, point, dir, dist_to_plane, close_child, data, debug);
+        if debug { println!("  First side {:?} {:?} {:?}", dist_to_plane, close_child, d1); }
 
         // If it hit something, immediately use that
         if let Some(d1) = d1 {
@@ -187,14 +231,14 @@ fn ray_intersect_recursive<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: 
         }
 
         // Raycast the far side
-        let midpoint = point + dir * (dist_to_plane + 0.01f32);
+        let midpoint = point + dir * dist_to_plane;
 
-        let d2 = ray_intersect_recursive(bsp, midpoint, dir, dist - dist_to_plane, far_child);
-        //println!("  Second side {:?} {:?} {:?} {:?}", midpoint, dist - dist_to_plane, far_child, d2);
+        let d2 = ray_intersect_recursive(bsp, midpoint, dir, dist - dist_to_plane, far_child, Some(IntersectData { plane_index, reverse_normal: far_reverse_normal }), debug);
+        if debug { println!("  Second side {:?} {:?} {:?} {:?}", midpoint, dist - dist_to_plane, far_child, d2); }
 
         // If it hit, use that, or return no contact
         if let Some(d2) = d2 {
-            return Some(dist_to_plane + d2);
+            return Some(IntersectionInternal { d: dist_to_plane + d2.d, data: d2.data, contents: d2.contents });
         } else {
             return None;
         }

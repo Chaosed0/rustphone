@@ -20,7 +20,7 @@ mod bsp_query;
 mod player;
 use player::Player;
 
-use std::ffi::c_void;
+use std::{f32::consts::PI, ffi::c_void};
 use raylib::prelude::*;
 use gns::GnsGlobal;
 use std::net::Ipv4Addr;
@@ -139,7 +139,11 @@ async fn main() -> Result<(), Box<dyn Error>>
             raycast_position = Some(cam.position);
             let raycast_dir = cam.target - cam.position;
             let rend = bsp_query::ray_intersect(&bsp_clipq, raycast_position.unwrap(), raycast_dir, f32::INFINITY);
-            raycast_end = Some(rend.unwrap_or(raycast_position.unwrap() + raycast_dir * 9999f32));
+            raycast_end = Some(match rend {
+				Some(rend) => rend.position,
+				None => raycast_position.unwrap() + raycast_dir * 9999f32
+			});
+
             //println!("{:?}->{:?}", raycast_position, raycast_end);
 		}
 
@@ -155,7 +159,7 @@ async fn main() -> Result<(), Box<dyn Error>>
 
         let mut d = rl.begin_drawing(&thread);
 
-        d.clear_background(Color::BLACK);
+        d.clear_background(Color::GRAY);
 		unsafe { raylib::ffi::rlEnableDepthTest() };
 		//unsafe { raylib::ffi::rlDisableBackfaceCulling() };
 		unsafe { raylib::ffi::rlSetClipPlanes(1f64, 100000f64) };
@@ -220,7 +224,7 @@ fn poll_input(rl: &mut RaylibHandle, player : &mut Player)
 
 	player.yaw -= mouse_delta.x * rot_speed;
 	player.pitch += mouse_delta.y * rot_speed;
-	player.pitch = player.pitch.clamp(-89f32, 89f32);
+	player.pitch = player.pitch.clamp(-PI * 0.49f32, PI * 0.49f32);
 
     let mut movement = Vector3::ZERO;
 
