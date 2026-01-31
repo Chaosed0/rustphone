@@ -16,6 +16,7 @@ mod palette;
 use palette::PALETTE;
 
 mod bsp_query;
+use bsp_query::*;
 
 mod player;
 use player::Player;
@@ -138,7 +139,7 @@ async fn main() -> Result<(), Box<dyn Error>>
 		if rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT) {
             raycast_position = Some(cam.position);
             let raycast_dir = cam.target - cam.position;
-            let rend = bsp_query::ray_intersect(&bsp_clipq, raycast_position.unwrap(), raycast_dir, f32::INFINITY);
+            let rend = ray_intersect(&bsp_clipq, raycast_position.unwrap(), raycast_dir, f32::INFINITY, *DPASS);
             raycast_end = Some(match rend {
 				Some(rend) => rend.position,
 				None => raycast_position.unwrap() + raycast_dir * 9999f32

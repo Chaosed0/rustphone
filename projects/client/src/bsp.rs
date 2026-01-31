@@ -8,6 +8,7 @@ use std::str::FromStr;
 use std::collections::HashSet;
 use std::collections::HashMap;
 use strum_macros::FromRepr;
+use enumset::EnumSetType;
 
 const BSP2_VER: i32 = (('B' as i32) << 0) | (('S' as i32) << 8) | (('P' as i32) << 16) | (('2' as i32) << 24);
 const LIT_VER: i32 = (('Q' as i32) << 0) | (('L' as i32) << 8) | (('I' as i32) << 16) | (('T' as i32) << 24);
@@ -139,6 +140,18 @@ pub enum LeafContents {
     Sky = -6,
     Origin = -7,
     Clip = -8
+}
+
+#[derive(FromRepr, EnumSetType, Debug)]
+pub enum LeafContentsSet {
+    Empty,
+    Solid,
+    Water,
+    Slime,
+    Lava,
+    Sky,
+    Origin,
+    Clip
 }
 
 pub struct Leaf

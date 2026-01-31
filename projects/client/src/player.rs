@@ -1,13 +1,14 @@
 use std::f32::consts::PI;
 
+use enumset::EnumSet;
 use raylib::prelude::*;
-use crate::bsp_query;
-use crate::bsp_query::BspQuery;
+use crate::{bsp::LeafContentsSet, bsp_query::*};
 
 const MOVE_SPEED: f32 = 256f32;
 const JUMP_SPEED: f32 = 300f32;
 const GRAVITY: f32 = 550f32;
 const DEPEN: f32 = 0.01f32;
+const MAX_STEP: f32 = 20f32;
 
 pub struct Player {
     pub movement: Vector3,
@@ -58,28 +59,48 @@ impl Player {
             let delta = MOVE_SPEED * dt;
             let move_dir = forward * movement.z + right * movement.x;
 
-            let intersect = bsp_query::ray_intersect(bsp, self.pos, move_dir, delta);
+            let intersect = ray_intersect(bsp, self.pos, move_dir, delta, *DPASS);
 
             let mut new_pos = match intersect {
                 Some(ref intersect) => intersect.position + intersect.normal * DEPEN,
                 None => self.pos + move_dir * delta
             };
 
-			// If we collided and there is some more distance left in the vector, then slide along the wall in that direction
+			// If we collided something, do some slide routines
 			if let Some(ref intersect) = intersect {
-				let remainder = (self.pos + move_dir * delta) - new_pos;
-				let wall_up = intersect.normal.cross(remainder).normalize();
-				let wall_along = intersect.normal.normalize().rotate_axis(wall_up, PI * 0.5f32);
-				let slide_length = wall_along.dot(remainder);
+				// Try climbing steps by raycasting upward through solids at the move location
+				let passable = DPASS.complement();
+				let desired_move = self.pos + move_dir * delta;
 
-				println!("Attempting slide: {:?} {:?} {:?} {:?} {:?}", intersect, remainder, wall_up, wall_along, slide_length);
+				println!("Attempting stair climb: {:?} {:?} {:?} {:?}", self.pos, desired_move, MAX_STEP, passable);
+				let climb_intersect = ray_intersect_debug(bsp, desired_move, Vector3::Y, MAX_STEP, passable);
 
-				if slide_length > 0.01f32 {
-					let intersect = bsp_query::ray_intersect(bsp, new_pos, wall_along, slide_length);
-					new_pos = match intersect {
-						Some(ref intersect) => intersect.position + intersect.normal * DEPEN,
-						None => new_pos + wall_along * slide_length
-					};
+				if let Some(climb_intersect) = climb_intersect {
+					// Normal is negated because it points into the solid
+					new_pos = climb_intersect.position - intersect.normal * DEPEN;
+				} else {
+					// If step climbing failed, try sliding along the collision like a wall
+					let remainder = (self.pos + move_dir * delta) - new_pos;
+
+					let mut wall_up = intersect.normal.cross(remainder).normalize();
+					wall_up.x = 0f32;
+					wall_up.z = 0f32;
+
+					if wall_up.length_squared() > 0.01f32 {
+						wall_up = wall_up.normalize();
+						let wall_along = intersect.normal.normalize().rotate_axis(wall_up, PI * 0.5f32);
+						let slide_length = wall_along.dot(remainder);
+
+						//println!("Attempting slide: {:?} {:?} {:?} {:?} {:?}", intersect, remainder, wall_up, wall_along, slide_length);
+
+						if slide_length > 0.01f32 {
+							let slide_intersect = ray_intersect(bsp, new_pos, wall_along, slide_length, *DPASS);
+							new_pos = match slide_intersect {
+								Some(ref intersect) => intersect.position + intersect.normal * DEPEN,
+								None => new_pos + wall_along * slide_length
+							};
+						}
+					}
 				}
 			}
 
@@ -89,7 +110,7 @@ impl Player {
 
         // Grounded check
         if self.is_grounded || self.y_speed <= 0f32 {
-            let intersect = bsp_query::ray_intersect(bsp, self.pos, -Vector3::Y, 0.1f32);
+            let intersect = ray_intersect(bsp, self.pos, -Vector3::Y, 0.1f32, *DPASS);
 
 			//println!("Grounded Check: {:?} {:?}", self.y_speed, intersect);
 
@@ -112,7 +133,7 @@ impl Player {
         if self.y_speed.abs() > 0.01f32 {
             let y_delta = self.y_speed.abs() * dt;
             let dir = Vector3::Y * self.y_speed.signum();
-            let intersect = bsp_query::ray_intersect(bsp, self.pos, dir, y_delta);
+            let intersect = ray_intersect(bsp, self.pos, dir, y_delta, *DPASS);
 
             let new_pos = match intersect {
                 Some(ref intersect) => intersect.position + intersect.normal * DEPEN,

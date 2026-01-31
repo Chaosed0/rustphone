@@ -1,5 +1,11 @@
 use raylib::prelude::*;
+use enumset::*;
 use crate::bsp::*;
+use lazy_static::lazy_static;
+
+lazy_static! {
+	pub static ref DPASS: EnumSet<LeafContentsSet> = EnumSet::from(LeafContentsSet::Empty);
+}
 
 #[derive(PartialEq, Debug)]
 pub struct Intersection {
@@ -108,15 +114,15 @@ pub fn point_intersect<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3) -> LeafCo
     }
 }
 
-pub fn ray_intersect_debug<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: Vector3, dist: f32) -> Option<Intersection> {
-	ray_intersect_internal(bsp, point, dir, dist, true)
+pub fn ray_intersect_debug<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: Vector3, dist: f32, passable: EnumSet<LeafContentsSet>) -> Option<Intersection> {
+	ray_intersect_internal(bsp, point, dir, dist, passable, true)
 }
 
-pub fn ray_intersect<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: Vector3, dist: f32) -> Option<Intersection> {
-	ray_intersect_internal(bsp, point, dir, dist, false)
+pub fn ray_intersect<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: Vector3, dist: f32, passable: EnumSet<LeafContentsSet>) -> Option<Intersection> {
+	ray_intersect_internal(bsp, point, dir, dist, passable, false)
 }
 
-fn ray_intersect_internal<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: Vector3, dist: f32, debug: bool) -> Option<Intersection> {
+fn ray_intersect_internal<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: Vector3, dist: f32, passable: EnumSet<LeafContentsSet>, debug: bool) -> Option<Intersection> {
     let point = to_bsp(point);
     let dir = to_bsp(dir);
     
@@ -126,7 +132,7 @@ fn ray_intersect_internal<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: V
 
     let dir = dir.normalize();
     if debug { println!("Raycast {:?} {:?} {:?}", point, dir, dist); }
-    let d = ray_intersect_recursive(bsp, point, dir, dist, 0, None, debug);
+    let d = ray_intersect_recursive(bsp, point, dir, dist, passable, 0, None, debug);
     if let Some(d) = d {
 		let normal = d.data.as_ref().map(|data| bsp.get_plane(data.plane_index).normal * if data.reverse_normal { -1f32 } else { 1f32 });
 		let normal = normal.unwrap_or(Vector3::ZERO);
@@ -140,11 +146,14 @@ fn ray_intersect_internal<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: V
     }
 }
 
-fn ray_intersect_recursive<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: Vector3, dist: f32, idx: i32, data: Option<IntersectData>, debug: bool) -> Option<IntersectionInternal> {
+fn ray_intersect_recursive<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: Vector3, dist: f32, passable: EnumSet<LeafContentsSet>, idx: i32, data: Option<IntersectData>, debug: bool) -> Option<IntersectionInternal> {
     if idx < 0 {
         let contents = bsp.get_contents(idx);
-		if debug { println!("  Intersected: {idx} {contents:?}."); }
-        if contents == LeafContents::Empty {
+		let set_value = LeafContentsSet::from_repr((-idx - 1) as usize).unwrap();
+
+		if debug { println!("  Intersected: {idx} {contents:?} {passable:?} {:?}.", passable.contains(set_value)); }
+
+        if passable.contains(set_value) {
             return None;
         } else {
             return Some(IntersectionInternal { d: 0f32, data: data, contents: contents });
@@ -166,17 +175,17 @@ fn ray_intersect_recursive<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: 
 			if debug { println!("  On plane. {idx} {plane_index} {d} {n} {:?} {:?}", plane.normal, plane.dist) }
 			if n > 0.01f32 {
 				if debug { println!("  Facing away from it, using node {:?}", node.children[0]); }
-				return ray_intersect_recursive(bsp, point, dir, dist, node.children[0], Some(IntersectData { plane_index, reverse_normal: true }), debug);
+				return ray_intersect_recursive(bsp, point, dir, dist, passable, node.children[0], Some(IntersectData { plane_index, reverse_normal: true }), debug);
 			} else if n < -0.01f32 {
 				if debug { println!("  Facing into it, using node {:?}", node.children[1]); }
-				return ray_intersect_recursive(bsp, point, dir, dist, node.children[1], Some(IntersectData { plane_index, reverse_normal: false }), debug);
+				return ray_intersect_recursive(bsp, point, dir, dist, passable, node.children[1], Some(IntersectData { plane_index, reverse_normal: false }), debug);
 			} else {
 				if debug { println!("  Parallel! First side:"); }
 
-				let d1 = ray_intersect_recursive(bsp, point + plane.normal * 0.01f32, dir, dist, node.children[0], Some(IntersectData { plane_index, reverse_normal: true }), debug);
+				let d1 = ray_intersect_recursive(bsp, point + plane.normal * 0.01f32, dir, dist, passable, node.children[0], Some(IntersectData { plane_index, reverse_normal: true }), debug);
 
 				if debug { println!("  Parallel! Second side:"); }
-				let d2 = ray_intersect_recursive(bsp, point - plane.normal * 0.01f32, dir, dist, node.children[1], Some(IntersectData { plane_index, reverse_normal: false }), debug);
+				let d2 = ray_intersect_recursive(bsp, point - plane.normal * 0.01f32, dir, dist, passable, node.children[1], Some(IntersectData { plane_index, reverse_normal: false }), debug);
 
 				// If we immediately encountered a solid, then ignore it and use the other side's result.
 				// Otherwise, use the closest intersection.
@@ -216,13 +225,13 @@ fn ray_intersect_recursive<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: 
         //  - Direction is facing towards the plane and dist won't reach the plane
         if d.signum() == n.signum() || dist_to_plane > dist {
             if debug { println!("  Same side. {:?} {:?} {:?} {:?} {:?}", d, n, dist_to_plane, dist, close_child); }
-            return ray_intersect_recursive(bsp, point, dir, dist, close_child, data, debug);
+            return ray_intersect_recursive(bsp, point, dir, dist, passable, close_child, data, debug);
         }
 
         // We will intersect this plane, so divide the ray in 2
         // Raycast the closer side
         if debug { println!("  Split ray {plane_index} {:?} {:?} {d} {n} {dist_to_plane}", plane.normal, plane.dist); }
-        let d1 = ray_intersect_recursive(bsp, point, dir, dist_to_plane, close_child, data, debug);
+        let d1 = ray_intersect_recursive(bsp, point, dir, dist_to_plane, passable, close_child, data, debug);
         if debug { println!("  First side {:?} {:?} {:?}", dist_to_plane, close_child, d1); }
 
         // If it hit something, immediately use that
@@ -233,7 +242,7 @@ fn ray_intersect_recursive<'a>(bsp: &'a impl BspQuery<'a>, point: Vector3, dir: 
         // Raycast the far side
         let midpoint = point + dir * dist_to_plane;
 
-        let d2 = ray_intersect_recursive(bsp, midpoint, dir, dist - dist_to_plane, far_child, Some(IntersectData { plane_index, reverse_normal: far_reverse_normal }), debug);
+        let d2 = ray_intersect_recursive(bsp, midpoint, dir, dist - dist_to_plane, passable, far_child, Some(IntersectData { plane_index, reverse_normal: far_reverse_normal }), debug);
         if debug { println!("  Second side {:?} {:?} {:?} {:?}", midpoint, dist - dist_to_plane, far_child, d2); }
 
         // If it hit, use that, or return no contact
