@@ -40,8 +40,8 @@ async fn main() -> Result<(), Box<dyn Error>>
         .build();
 
     let transport = Transport::new(gns_global.clone(), Ipv4Addr::LOCALHOST.into(), 27821).expect("connection failed");
-	//let bsp = load_bsp("assets/box.bsp");
-	let bsp = load_bsp("assets/qbj3_chaosed0.bsp");
+	let bsp = load_bsp("assets/box.bsp");
+	//let bsp = load_bsp("assets/qbj3_chaosed0.bsp");
 	let mut bsp_render = BspRender::new();
 
 	bsp_render.load_skybox("assets/skybox/mak_cloudysky5");
@@ -104,7 +104,7 @@ async fn main() -> Result<(), Box<dyn Error>>
 
 	//let mut time = 0f32;
 
-	println!("ENTITIES: {:?}", bsp.entities);
+	//println!("ENTITIES: {:?}", bsp.entities);
 
 	rl.set_target_fps(60);
 

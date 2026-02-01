@@ -1,9 +1,12 @@
+use byteorder::LittleEndian;
+use byteorder::ReadBytesExt;
 use raylib::core::math::*;
 use raylib::prelude::*;
 use std::fs::File;
 use std::path::Path;
 use std::io::prelude::*;
 use std::io::BufReader;
+use std::ptr::null;
 use std::str::FromStr;
 use std::collections::HashSet;
 use std::collections::HashMap;
@@ -11,6 +14,7 @@ use strum_macros::FromRepr;
 use enumset::EnumSetType;
 
 const BSP2_VER: i32 = (('B' as i32) << 0) | (('S' as i32) << 8) | (('P' as i32) << 16) | (('2' as i32) << 24);
+const BSPX_VER: i32 = (('B' as i32) << 0) | (('S' as i32) << 8) | (('P' as i32) << 16) | (('X' as i32) << 24);
 const LIT_VER: i32 = (('Q' as i32) << 0) | (('L' as i32) << 8) | (('I' as i32) << 16) | (('T' as i32) << 24);
 const MAX_LIGHTMAPS: usize = 4;
 const MAX_MAP_HULLS: usize = 4;
@@ -52,6 +56,8 @@ pub struct Bsp
 	pub submodels: Vec<Model>,
 	pub texofs: [usize; 7], // Offset into used_textures for each texture type
 	pub used_textures: Vec<i32>,
+
+	pub lightgrid: Option<Lightgrid>
 }
 
 #[derive(Default)]
@@ -75,11 +81,26 @@ struct BspHeader
 	models: LumpHeader,
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct LumpHeader
 {
 	offset: i32,
 	size: i32
+}
+
+#[derive(Debug)]
+struct BspxHeader
+{
+	version: i32,
+	lump_count: i32,
+	lumps: Vec<BspxLumpHeader>
+}
+
+#[derive(Debug)]
+struct BspxLumpHeader
+{
+	name: String,
+	header: LumpHeader
 }
 
 enum ModelType
@@ -256,6 +277,50 @@ pub struct Texture
 	pub pixels: Vec<u8>,
 }
 
+pub struct Lightgrid {
+	subgrids: Vec<LightSubgrid>,
+}
+
+#[derive(Debug)]
+pub struct LightgridHeader {
+	grid_dist: Vector3,
+	grid_size: Vector3,
+	grid_mins: Vector3,
+	num_styles: u8,
+	root_node: u32
+}
+
+pub struct LightSubgrid {
+	header: LightgridHeader,
+	nodes: Vec<LightgridNode>,
+	leafs: Vec<LightgridLeaf>,
+}
+
+pub struct LightgridNode {
+	division_point: [i32;3],
+	children: [u32;8]
+}
+
+pub struct LightgridLeaf {
+	mins: [i32;3],
+	size: [i32;3],
+	max_styles: u8,
+	samples: Vec<LightgridSampleSet>,
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct LightgridSampleSet {
+	samples: [LightgridSamples;4],
+	used_styles: u8,
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct LightgridSamples {
+	// 6 3-byte colors, one per cube side
+	colors: [u8;18],
+	style: u8,
+}
+
 pub fn load_bsp(filename: &str) -> Bsp
 {
 	let exe_path = std::env::current_exe().expect("no exe path");
@@ -300,22 +365,29 @@ pub fn load_bsp(filename: &str) -> Bsp
 	println!("  surf_edges: {:?} {:?}", header.surf_edges.offset, header.surf_edges.size);
 	println!("  models: {:?} {:?}", header.models.offset, header.models.size);
 
-	let vertexes = read_verts(header.vertices, &mut reader, &mut buf);
-	let edges = read_edges(header.edges, &mut reader, &mut buf);
-	let surf_edges = read_surf_edges(header.surf_edges, &mut reader, &mut buf);
-	let textures = read_textures(header.mip_tex, &mut reader, &mut buf);
-	let lit_data = read_lighting(header.lightmaps, &mut reader, &mut buf, &path);
-	let planes = read_planes(header.planes, &mut reader, &mut buf);
-	let tex_infos= read_texinfo(header.tex_info, &mut reader, &mut buf, &textures);
-	let surfaces = read_faces(header.faces, &mut reader, &mut buf, &tex_infos, &textures, &vertexes, &surf_edges, &edges);
-	let mark_surfaces = read_marksurfaces(header.mark_surfaces, &mut reader, &mut buf, surfaces.len() as i32);
-	let vis_data = read_vis(header.visilist, &mut reader);
-	let leafs = read_leafs(header.leaves, &mut reader, &mut buf);
-	let nodes = read_nodes(header.nodes, &mut reader, &mut buf);
-	let clip_nodes = read_clip_nodes(header.clip_nodes, &mut reader, &mut buf);
-	let entities = read_entities(header.entities, &mut reader, &mut buf);
-	let submodels = read_submodels(header.models, &mut reader, &mut buf);
+	let vertexes = read_verts(&header.vertices, &mut reader, &mut buf);
+	let edges = read_edges(&header.edges, &mut reader, &mut buf);
+	let surf_edges = read_surf_edges(&header.surf_edges, &mut reader, &mut buf);
+	let textures = read_textures(&header.mip_tex, &mut reader, &mut buf);
+	let lit_data = read_lighting(&header.lightmaps, &mut reader, &mut buf, &path);
+	let planes = read_planes(&header.planes, &mut reader, &mut buf);
+	let tex_infos= read_texinfo(&header.tex_info, &mut reader, &mut buf, &textures);
+	let surfaces = read_faces(&header.faces, &mut reader, &mut buf, &tex_infos, &textures, &vertexes, &surf_edges, &edges);
+	let mark_surfaces = read_marksurfaces(&header.mark_surfaces, &mut reader, &mut buf, surfaces.len() as i32);
+	let vis_data = read_vis(&header.visilist, &mut reader);
+	let leafs = read_leafs(&header.leaves, &mut reader, &mut buf);
+	let nodes = read_nodes(&header.nodes, &mut reader, &mut buf);
+	let clip_nodes = read_clip_nodes(&header.clip_nodes, &mut reader, &mut buf);
+	let entities = read_entities(&header.entities, &mut reader, &mut buf);
+	let submodels = read_submodels(&header.models, &mut reader, &mut buf);
 	let (texofs, used_textures) = build_used_textures(&surfaces, &textures, &tex_infos);
+
+	reader.seek(std::io::SeekFrom::Start((header.mip_tex.offset + header.mip_tex.size) as u64)).unwrap();
+	let bspx_header = read_bspx_header(&mut reader);
+
+	println!("  bspx: {:?}", bspx_header);
+
+	let lightgrid = if let Some(bspx_header) = bspx_header { read_lightgrids(bspx_header, &mut reader) } else { None };
 
 	return Bsp {
 		textures,
@@ -335,10 +407,11 @@ pub fn load_bsp(filename: &str) -> Bsp
 		submodels,
 		texofs,
 		used_textures,
+		lightgrid,
 	};
 }
 
-fn read_verts(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Vector3>
+fn read_verts(header: &LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Vector3>
 {
 	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
 		.unwrap_or_else(|err| panic!("{err}: Invalid vert offset {:?}", header.offset));
@@ -347,13 +420,13 @@ fn read_verts(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8
 
 	for _ in 0..count
 	{
-		verts.push(read_vec3(reader, buf));
+		verts.push(read_vec3(reader));
 	}
 
 	return verts;
 }
 
-fn read_edges(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Edge>
+fn read_edges(header: &LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Edge>
 {
 	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
 		.unwrap_or_else(|err| panic!("{err}: Invalid edge offset {:?}", header.offset));
@@ -369,7 +442,7 @@ fn read_edges(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8
 	return edges;
 }
 
-fn read_surf_edges(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<i32>
+fn read_surf_edges(header: &LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<i32>
 {
 	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
 		.unwrap_or_else(|err| panic!("{err}: Invalid surf_edge offset {:?}", header.offset));
@@ -388,7 +461,7 @@ fn read_surf_edges(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut V
 	return surf_edges;
 }
 
-fn read_textures(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Texture>
+fn read_textures(header: &LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Texture>
 {
 	if header.size == 0
 	{
@@ -452,7 +525,7 @@ fn read_textures(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec
 	return mip_texs;
 }
 
-fn read_lighting(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>, path: &Path) -> Vec<u8>
+fn read_lighting(header: &LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>, path: &Path) -> Vec<u8>
 {
 	let lit_filename = path.with_extension("lit");
 
@@ -486,7 +559,7 @@ fn read_lighting(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec
 	}
 }
 
-fn read_planes(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Plane>
+fn read_planes(header: &LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Plane>
 {
 	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
 		.unwrap_or_else(|err| panic!("{err}: Invalid plane offset {:?}", header.offset));
@@ -495,7 +568,7 @@ fn read_planes(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u
 
 	for _ in 0..count
 	{
-		let normal = read_vec3(reader, buf);
+		let normal = read_vec3(reader);
 		let bits = if normal.x < 0f32 { 1 << 0 } else { 0 } |
 			if normal.y < 0f32 { 1 << 1 } else { 0 } |
 			if normal.z < 0f32 { 1 << 2 } else { 0 };
@@ -509,7 +582,7 @@ fn read_planes(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u
 	return planes;
 }
 
-fn read_texinfo(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>, texs: &Vec<Texture>) -> Vec<TexInfo>
+fn read_texinfo(header: &LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>, texs: &Vec<Texture>) -> Vec<TexInfo>
 {
 	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
 		.unwrap_or_else(|err| panic!("{err}: Invalid tex_info offset {:?}", header.offset));
@@ -519,9 +592,9 @@ fn read_texinfo(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<
 
 	for _ in 0..count
 	{
-		let v0 = read_vec3(reader, buf);
+		let v0 = read_vec3(reader);
 		let ofs_x = read_f32(reader, buf);
-		let v1 = read_vec3(reader, buf);
+		let v1 = read_vec3(reader);
 		let ofs_y = read_f32(reader, buf);
 
 		let mip_tex = read_i32(reader, buf);
@@ -545,7 +618,7 @@ fn read_texinfo(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<
 	return tex_infos;
 }
 
-fn read_faces(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>, tex_info: &Vec<TexInfo>, textures: &Vec<Texture>, vertexes: &Vec<Vector3>, surf_edges: &Vec<i32>, edges: &Vec<Edge>) -> Vec<Surface>
+fn read_faces(header: &LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>, tex_info: &Vec<TexInfo>, textures: &Vec<Texture>, vertexes: &Vec<Vector3>, surf_edges: &Vec<i32>, edges: &Vec<Edge>) -> Vec<Surface>
 {
 	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
 		.unwrap_or_else(|err| panic!("{err}: Invalid face offset {:?}", header.offset));
@@ -718,7 +791,7 @@ fn read_faces(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8
 	return surfs;
 }
 
-fn read_marksurfaces(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>, max_surfcount: i32) -> Vec<i32>
+fn read_marksurfaces(header: &LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>, max_surfcount: i32) -> Vec<i32>
 {
 	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
 		.unwrap_or_else(|err| panic!("{err}: Invalid marksurfaces offset {:?}", header.offset));
@@ -739,7 +812,7 @@ fn read_marksurfaces(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut
 	return mark_surfaces;
 }
 
-fn read_vis(header: LumpHeader, reader: &mut BufReader<File>) -> Vec<u8>
+fn read_vis(header: &LumpHeader, reader: &mut BufReader<File>) -> Vec<u8>
 {
 	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
 		.unwrap_or_else(|err| panic!("Invalid vis offset {:?}: {err}", header.offset));
@@ -749,7 +822,7 @@ fn read_vis(header: LumpHeader, reader: &mut BufReader<File>) -> Vec<u8>
 	return vis;
 }
 
-fn read_leafs(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Leaf>
+fn read_leafs(header: &LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Leaf>
 {
 	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
 		.unwrap_or_else(|err| panic!("{err}: Invalid marksurfaces offset {:?}", header.offset));
@@ -773,7 +846,7 @@ fn read_leafs(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8
 	return leafs;
 }
 
-fn read_nodes(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Node>
+fn read_nodes(header: &LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Node>
 {
 	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
 		.unwrap_or_else(|err| panic!("{err}: Invalid nodes offset {:?}", header.offset));
@@ -785,8 +858,8 @@ fn read_nodes(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8
 		let plane_index = read_u32(reader, buf);
 		let child0 = read_i32(reader, buf);
 		let child1 = read_i32(reader, buf);
-		let mins = read_vec3(reader, buf);
-		let maxs = read_vec3(reader, buf);
+		let mins = read_vec3(reader);
+		let maxs = read_vec3(reader);
 		let first_surf = read_u32(reader, buf);
 		let num_surf = read_u32(reader, buf);
 
@@ -796,7 +869,7 @@ fn read_nodes(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8
 	return nodes;
 }
 
-fn read_clip_nodes(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<ClipNode>
+fn read_clip_nodes(header: &LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<ClipNode>
 {
 	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
 		.unwrap_or_else(|err| panic!("{err}: Invalid clip nodes offset {:?}", header.offset));
@@ -815,7 +888,7 @@ fn read_clip_nodes(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut V
 	return nodes;
 }
 
-fn read_entities(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Entity>
+fn read_entities(header: &LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Entity>
 {
 	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
 		.unwrap_or_else(|err| panic!("Invalid entities offset {:?}: {err}", header.offset));
@@ -887,7 +960,7 @@ fn read_entities(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec
 	return entities;
 }
 
-fn read_submodels(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Model>
+fn read_submodels(header: &LumpHeader, reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vec<Model>
 {
 	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
 		.unwrap_or_else(|err| panic!("{err}: Invalid submodels offset {:?}", header.offset));
@@ -896,9 +969,9 @@ fn read_submodels(header: LumpHeader, reader: &mut BufReader<File>, buf: &mut Ve
 
 	for _ in 0..count
 	{
-		let mins = read_vec3(reader, buf);
-		let maxs = read_vec3(reader, buf);
-		let origin = read_vec3(reader, buf);
+		let mins = read_vec3(reader);
+		let maxs = read_vec3(reader);
+		let origin = read_vec3(reader);
 		let headnode0 = read_i32(reader, buf);
 		let headnode1 = read_i32(reader, buf);
 		let headnode2 = read_i32(reader, buf);
@@ -951,6 +1024,142 @@ fn build_used_textures(surfs: &Vec<Surface>, textures: &Vec<Texture>, tex_infos:
 	}
 
 	return (texofs, used_textures);
+}
+
+fn read_bspx_header(reader: &mut BufReader<File>) -> Option<BspxHeader>
+{
+	println!("Checking for BSPX_VERSION at offset {:?}", reader.stream_position().unwrap());
+	let version_opt = reader.read_i32::<LittleEndian>();
+
+	let version = match version_opt {
+		Ok(version) => version,
+		Err(err) => { println!("Could not read bspx header: {err}"); return None; }
+	};
+
+	if version != BSPX_VER {
+		println!("Tried to read BSPX version and got {version}, expected {BSPX_VER}");
+		return None;
+	}
+
+	let lump_count = reader.read_i32::<LittleEndian>().unwrap();
+	let mut lumps = vec!();
+
+	for _ in 0..lump_count {
+		let mut buf = [0u8;24];
+		reader.read_exact(&mut buf).unwrap();
+		let null_char_idx = buf.iter().position(|&c| c == b'\0').unwrap();
+		let name = String::from_utf8_lossy(&buf[0..null_char_idx]).to_string();
+		let offset = reader.read_i32::<LittleEndian>().unwrap();
+		let size = reader.read_i32::<LittleEndian>().unwrap();
+
+		let header = BspxLumpHeader { name, header: LumpHeader { offset, size } };
+		lumps.push(header)
+	}
+
+	return Some(BspxHeader { version, lump_count, lumps });
+}
+
+fn read_lightgrids(bspx_header: BspxHeader, reader: &mut BufReader<File>) -> Option<Lightgrid> {
+	let header = &bspx_header.lumps.iter().find(|h| h.name == "LIGHTGRIDS")?.header;
+
+	println!("Found LIGHTGRIDS header: {:?}", header);
+
+	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
+		.unwrap_or_else(|err| panic!("{err}: Invalid lightgrids offset {:?}", header.offset));
+
+	let mut subgrids = vec!();
+
+	while reader.stream_position().unwrap() < (header.size + header.offset) as u64 {
+		let lightgrid_size = reader.read_u32::<LittleEndian>().unwrap();
+
+		println!("Reading subgrid of size: {:?}", lightgrid_size);
+
+		let grid_dist = read_vec3(reader);
+		let grid_size = read_vec3(reader);
+		let grid_mins = read_vec3(reader);
+		let num_styles = reader.read_u8().unwrap();
+		let root_node = reader.read_u32::<LittleEndian>().unwrap();
+
+		let header = LightgridHeader { grid_dist, grid_size, grid_mins, num_styles, root_node };
+
+		let node_count = reader.read_u32::<LittleEndian>().unwrap();
+		let mut nodes = vec!();
+
+		println!("Reading {node_count} nodes");
+
+		for i in 0..node_count {
+			let mut division_point = [0i32;3];
+
+			for j in 0..3 {
+				division_point[j] = reader.read_i32::<LittleEndian>().unwrap();
+			}
+
+			let mut children = [0u32;8];
+
+			for j in 0..8 {
+				children[j] = reader.read_u32::<LittleEndian>().unwrap();
+			}
+
+			println!("Read node {i}: {division_point:?} -- {children:?}");
+
+			let node = LightgridNode { division_point, children };
+			nodes.push(node);
+		}
+
+		let leaf_count = reader.read_u32::<LittleEndian>().unwrap();
+		let mut leafs = vec!();
+
+		//println!("Reading {leaf_count} leafs");
+
+		for _ in 0..leaf_count {
+			let mins = [reader.read_i32::<LittleEndian>().unwrap(), reader.read_i32::<LittleEndian>().unwrap(), reader.read_i32::<LittleEndian>().unwrap()];
+			let size = [reader.read_i32::<LittleEndian>().unwrap(), reader.read_i32::<LittleEndian>().unwrap(), reader.read_i32::<LittleEndian>().unwrap()];
+			let max_styles = reader.read_u8().unwrap();
+
+			let sample_count = size[0] * size[1] * size[2];
+			let mut samples = vec![LightgridSampleSet::default(); sample_count as usize];
+
+			//println!(" Reading {sample_count} sample sets {mins:?} {size:?} {max_styles}");
+
+			for sample_idx in 0..sample_count {
+				let mut sample_set = &mut samples[sample_idx as usize];
+				sample_set.used_styles = reader.read_u8().unwrap();
+
+				if sample_set.used_styles == 0xff {
+					//println!("  Skipping sample reading for this set, it is occluded");
+				} else {
+					//println!("  Reading {:?} styles", sample_set.used_styles);
+
+					for style_idx in 0..sample_set.used_styles {
+						let sample = &mut sample_set.samples[style_idx as usize];
+						sample.style = reader.read_u8().unwrap();
+						let flags = reader.read_u8().unwrap();
+
+						//println!("   Reading 6 sides {:?} {:?}", sample.style, flags);
+
+						for side_idx in 0..6 {
+							if (flags & (1 << side_idx)) > 0u8 {
+								sample.colors[side_idx * 3 + 0] = reader.read_u8().unwrap();
+								sample.colors[side_idx * 3 + 1] = reader.read_u8().unwrap();
+								sample.colors[side_idx * 3 + 2] = reader.read_u8().unwrap();
+							}
+							// else: sample is already zeroed by default
+						}
+					}
+				}
+			}
+
+			let leaf = LightgridLeaf { mins, size, max_styles, samples };
+			leafs.push(leaf);
+		}
+
+		println!("Read subgrid: {header:?} -- {:?} nodes, {:?} leafs", nodes.len(), leafs.len());
+
+		let subgrid = LightSubgrid { header, nodes, leafs };
+		subgrids.push(subgrid);
+	}
+
+	return Some(Lightgrid { subgrids });
 }
 
 fn texture_type_from_name(name: &String) -> TextureType
@@ -1011,9 +1220,9 @@ fn read_f32(reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> f32
 	return f32::from_le_bytes(buf[0..4].try_into().unwrap());
 }
 
-fn read_vec3(reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> Vector3
+fn read_vec3(reader: &mut BufReader<File>) -> Vector3
 {
-	return Vector3 { x: read_f32(reader, buf), y: read_f32(reader, buf), z: read_f32(reader, buf) };
+	return Vector3 { x: reader.read_f32::<LittleEndian>().unwrap(), y: reader.read_f32::<LittleEndian>().unwrap(), z: reader.read_f32::<LittleEndian>().unwrap() };
 }
 
 fn read_string16(reader: &mut BufReader<File>, buf: &mut Vec<u8>) -> String
