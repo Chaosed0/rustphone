@@ -1,3 +1,3 @@
 #!/bin/bash
 
-./cargo.sh run --bin game
+./cargo.sh build && target/debug/game

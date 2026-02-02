@@ -16,6 +16,10 @@ use enumset::EnumSetType;
 const BSP2_VER: i32 = (('B' as i32) << 0) | (('S' as i32) << 8) | (('P' as i32) << 16) | (('2' as i32) << 24);
 const BSPX_VER: i32 = (('B' as i32) << 0) | (('S' as i32) << 8) | (('P' as i32) << 16) | (('X' as i32) << 24);
 const LIT_VER: i32 = (('Q' as i32) << 0) | (('L' as i32) << 8) | (('I' as i32) << 16) | (('T' as i32) << 24);
+
+pub const LIGHTGRID_OCCLUDED: u32 = 1u32 << 30;
+pub const LIGHTGRID_LEAF: u32 = 1u32 << 31;
+
 const MAX_LIGHTMAPS: usize = 4;
 const MAX_MAP_HULLS: usize = 4;
 const NUM_AMBIENTS: usize = 4;
@@ -278,47 +282,49 @@ pub struct Texture
 }
 
 pub struct Lightgrid {
-	subgrids: Vec<LightSubgrid>,
+	pub header: LightgridHeader,
+	pub nodes: Vec<LightgridNode>,
+	pub leafs: Vec<LightgridLeaf>,
+	pub samples: Vec<LightgridSampleSet>,
 }
 
 #[derive(Debug)]
+#[repr(C)]
 pub struct LightgridHeader {
-	grid_dist: Vector3,
-	grid_size: Vector3,
-	grid_mins: Vector3,
-	num_styles: u8,
-	root_node: u32
+	pub grid_dist: Vector3,
+	pub grid_size: [i32;3],
+	pub grid_mins: Vector3,
+	pub root_node: u32,
+	pub num_styles: u8,
+	_pad0: u8,
+	_pad1: u16,
 }
 
-pub struct LightSubgrid {
-	header: LightgridHeader,
-	nodes: Vec<LightgridNode>,
-	leafs: Vec<LightgridLeaf>,
-}
-
+#[repr(C)]
 pub struct LightgridNode {
-	division_point: [i32;3],
-	children: [u32;8]
+	pub division_point: [i32;3],
+	pub children: [u32;8]
 }
 
+#[repr(C)]
 pub struct LightgridLeaf {
-	mins: [i32;3],
-	size: [i32;3],
-	max_styles: u8,
-	samples: Vec<LightgridSampleSet>,
+	pub mins: [i32;3],
+	pub size: [i32;3],
+	pub sample_start_idx: i32,
 }
 
+#[repr(C)]
 #[derive(Default, Clone, Copy)]
 pub struct LightgridSampleSet {
-	samples: [LightgridSamples;4],
-	used_styles: u8,
+	pub samples: [LightgridSample;4],
+	pub used_styles: u8,
 }
 
 #[derive(Default, Clone, Copy)]
-pub struct LightgridSamples {
-	// 6 3-byte colors, one per cube side
-	colors: [u8;18],
-	style: u8,
+#[repr(C)]
+pub struct LightgridSample {
+	pub color: [u8;3],
+	pub style: u8,
 }
 
 pub fn load_bsp(filename: &str) -> Bsp
@@ -1060,106 +1066,88 @@ fn read_bspx_header(reader: &mut BufReader<File>) -> Option<BspxHeader>
 }
 
 fn read_lightgrids(bspx_header: BspxHeader, reader: &mut BufReader<File>) -> Option<Lightgrid> {
-	let header = &bspx_header.lumps.iter().find(|h| h.name == "LIGHTGRIDS")?.header;
+	let header = &bspx_header.lumps.iter().find(|h| h.name == "LIGHTGRID_OCTREE")?.header;
 
-	println!("Found LIGHTGRIDS header: {:?}", header);
+	println!("Found LIGHTGRID_OCTREE header: {:?}", header);
 
 	reader.seek(std::io::SeekFrom::Start(header.offset as u64))
-		.unwrap_or_else(|err| panic!("{err}: Invalid lightgrids offset {:?}", header.offset));
+		.unwrap_or_else(|err| panic!("{err}: Invalid lightgrid_octree offset {:?}", header.offset));
 
-	let mut subgrids = vec!();
+	let grid_dist = read_vec3(reader);
+	let grid_size = [reader.read_i32::<LittleEndian>().unwrap(), reader.read_i32::<LittleEndian>().unwrap(), reader.read_i32::<LittleEndian>().unwrap()];
+	let grid_mins = read_vec3(reader);
+	let num_styles = reader.read_u8().unwrap();
+	let root_node = reader.read_u32::<LittleEndian>().unwrap();
 
-	while reader.stream_position().unwrap() < (header.size + header.offset) as u64 {
-		let lightgrid_size = reader.read_u32::<LittleEndian>().unwrap();
+	let header = LightgridHeader { grid_dist, grid_size, grid_mins, num_styles, root_node, _pad0: 0, _pad1: 0 };
 
-		println!("Reading subgrid of size: {:?}", lightgrid_size);
+	let node_count = reader.read_u32::<LittleEndian>().unwrap();
+	let mut nodes = vec!();
 
-		let grid_dist = read_vec3(reader);
-		let grid_size = read_vec3(reader);
-		let grid_mins = read_vec3(reader);
-		let num_styles = reader.read_u8().unwrap();
-		let root_node = reader.read_u32::<LittleEndian>().unwrap();
+	println!("Reading {node_count} nodes");
 
-		let header = LightgridHeader { grid_dist, grid_size, grid_mins, num_styles, root_node };
+	for i in 0..node_count {
+		let mut division_point = [0i32;3];
 
-		let node_count = reader.read_u32::<LittleEndian>().unwrap();
-		let mut nodes = vec!();
-
-		println!("Reading {node_count} nodes");
-
-		for i in 0..node_count {
-			let mut division_point = [0i32;3];
-
-			for j in 0..3 {
-				division_point[j] = reader.read_i32::<LittleEndian>().unwrap();
-			}
-
-			let mut children = [0u32;8];
-
-			for j in 0..8 {
-				children[j] = reader.read_u32::<LittleEndian>().unwrap();
-			}
-
-			println!("Read node {i}: {division_point:?} -- {children:?}");
-
-			let node = LightgridNode { division_point, children };
-			nodes.push(node);
+		for j in 0..3 {
+			division_point[j] = reader.read_i32::<LittleEndian>().unwrap();
 		}
 
-		let leaf_count = reader.read_u32::<LittleEndian>().unwrap();
-		let mut leafs = vec!();
+		let mut children = [0u32;8];
 
-		//println!("Reading {leaf_count} leafs");
-
-		for _ in 0..leaf_count {
-			let mins = [reader.read_i32::<LittleEndian>().unwrap(), reader.read_i32::<LittleEndian>().unwrap(), reader.read_i32::<LittleEndian>().unwrap()];
-			let size = [reader.read_i32::<LittleEndian>().unwrap(), reader.read_i32::<LittleEndian>().unwrap(), reader.read_i32::<LittleEndian>().unwrap()];
-			let max_styles = reader.read_u8().unwrap();
-
-			let sample_count = size[0] * size[1] * size[2];
-			let mut samples = vec![LightgridSampleSet::default(); sample_count as usize];
-
-			//println!(" Reading {sample_count} sample sets {mins:?} {size:?} {max_styles}");
-
-			for sample_idx in 0..sample_count {
-				let mut sample_set = &mut samples[sample_idx as usize];
-				sample_set.used_styles = reader.read_u8().unwrap();
-
-				if sample_set.used_styles == 0xff {
-					//println!("  Skipping sample reading for this set, it is occluded");
-				} else {
-					//println!("  Reading {:?} styles", sample_set.used_styles);
-
-					for style_idx in 0..sample_set.used_styles {
-						let sample = &mut sample_set.samples[style_idx as usize];
-						sample.style = reader.read_u8().unwrap();
-						let flags = reader.read_u8().unwrap();
-
-						//println!("   Reading 6 sides {:?} {:?}", sample.style, flags);
-
-						for side_idx in 0..6 {
-							if (flags & (1 << side_idx)) > 0u8 {
-								sample.colors[side_idx * 3 + 0] = reader.read_u8().unwrap();
-								sample.colors[side_idx * 3 + 1] = reader.read_u8().unwrap();
-								sample.colors[side_idx * 3 + 2] = reader.read_u8().unwrap();
-							}
-							// else: sample is already zeroed by default
-						}
-					}
-				}
-			}
-
-			let leaf = LightgridLeaf { mins, size, max_styles, samples };
-			leafs.push(leaf);
+		for j in 0..8 {
+			children[j] = reader.read_u32::<LittleEndian>().unwrap();
 		}
 
-		println!("Read subgrid: {header:?} -- {:?} nodes, {:?} leafs", nodes.len(), leafs.len());
+		println!("Read node {i}: {division_point:?} -- {children:?}");
 
-		let subgrid = LightSubgrid { header, nodes, leafs };
-		subgrids.push(subgrid);
+		let node = LightgridNode { division_point, children };
+		nodes.push(node);
 	}
 
-	return Some(Lightgrid { subgrids });
+	let leaf_count = reader.read_u32::<LittleEndian>().unwrap();
+	let mut leafs = vec!();
+	let mut samples = vec!();
+
+	println!("Reading {leaf_count} leafs");
+
+	for _ in 0..leaf_count {
+		let mins = [reader.read_i32::<LittleEndian>().unwrap(), reader.read_i32::<LittleEndian>().unwrap(), reader.read_i32::<LittleEndian>().unwrap()];
+		let size = [reader.read_i32::<LittleEndian>().unwrap(), reader.read_i32::<LittleEndian>().unwrap(), reader.read_i32::<LittleEndian>().unwrap()];
+
+		let sample_count = size[0] * size[1] * size[2];
+
+		println!(" Reading {sample_count} samples {mins:?} {size:?}");
+		let sample_start_idx = samples.len() as i32;
+		samples.resize((sample_start_idx + sample_count) as usize, LightgridSampleSet::default());
+
+		for sample_idx in 0..sample_count {
+			let sample_set = &mut samples[(sample_start_idx + sample_idx) as usize];
+			sample_set.used_styles = reader.read_u8().unwrap();
+
+			if sample_set.used_styles == 0xff {
+				println!("  Skipping sample reading for this set, it is occluded");
+			} else {
+				println!("  Reading {:?} styles", sample_set.used_styles);
+
+				for style_idx in 0..sample_set.used_styles {
+					let sample = &mut sample_set.samples[style_idx as usize];
+					sample.style = reader.read_u8().unwrap();
+
+					//println!("   Reading color {:?} {:?}", sample.style, flags);
+
+					sample.color[0] = reader.read_u8().unwrap();
+					sample.color[1] = reader.read_u8().unwrap();
+					sample.color[2] = reader.read_u8().unwrap();
+				}
+			}
+		}
+
+		let leaf = LightgridLeaf { mins, size, sample_start_idx };
+		leafs.push(leaf);
+	}
+
+	return Some(Lightgrid { header, nodes, leafs, samples });
 }
 
 fn texture_type_from_name(name: &String) -> TextureType

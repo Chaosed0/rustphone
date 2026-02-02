@@ -21,7 +21,7 @@ use bsp_query::*;
 mod player;
 use player::Player;
 
-use std::{f32::consts::PI, ffi::c_void};
+use std::{f32::consts::PI, ffi::c_void, sync::atomic::{AtomicBool, Ordering} };
 use raylib::prelude::*;
 use gns::GnsGlobal;
 use std::net::Ipv4Addr;
@@ -176,6 +176,9 @@ async fn main() -> Result<(), Box<dyn Error>>
                 d3d.draw_sphere_wires(end, 4f32, 8, 8, Color::ORANGE); 
                 d3d.draw_ray(Ray::new(pos, end - pos), Color::RED);
             }
+
+			render_lightgrid_leafs(&mut d3d, &bsp);
+			print.store(false, std::sync::atomic::Ordering::Relaxed);
 		});
 
 		d.draw_texture_ex(&lightmaps[0], Vector2::new(10f32, 10f32), 0f32, 0.2f32, Color::WHITE);
@@ -184,6 +187,66 @@ async fn main() -> Result<(), Box<dyn Error>>
     }
 
 	return Ok(());
+}
+
+static print: AtomicBool = AtomicBool::new(true);
+
+fn render_lightgrid_leafs(d3d: &mut RaylibMode3D<'_, RaylibDrawHandle>, bsp: &Bsp) {
+	let Some(lightgrid) = bsp.lightgrid.as_ref() else { return; };
+	render_lightgrid_leafs_recursive(d3d, &lightgrid, &lightgrid.nodes[lightgrid.header.root_node as usize], Vector3::ZERO, &lightgrid.header);
+}
+
+fn render_lightgrid_leafs_recursive(d3d: &mut RaylibMode3D<'_, RaylibDrawHandle>, lightgrid: &Lightgrid, node: &LightgridNode, pos: Vector3, header: &LightgridHeader) {
+	for i in 0..node.children.len() {
+		render_lightgrid_node(d3d, lightgrid, node.children[i], pos + get_octant_offset(i as u32, node.division_point), header);
+	}
+}
+
+fn get_octant_offset(i: u32, div_point: [i32;3]) -> Vector3 {
+	return Vector3::new(
+		if (i & 4) > 0 { 0f32 } else { div_point[0] as f32 },
+		if (i & 2) > 0 { 0f32 } else { div_point[1] as f32 },
+		if (i & 1) > 0 { 0f32 } else { div_point[2] as f32 }
+	);
+}
+
+fn render_lightgrid_node(d3d: &mut RaylibMode3D<'_, RaylibDrawHandle>, lightgrid: &Lightgrid, node_index: u32, pos: Vector3, header: &LightgridHeader) {
+	if (node_index & LIGHTGRID_OCCLUDED) > 0 {
+		if print.load(Ordering::Relaxed) { println!("  Node {node_index} is occluded"); }
+	} else if (node_index & LIGHTGRID_LEAF) > 0 {
+		let leaf_index = node_index & (!LIGHTGRID_LEAF);
+		let leaf = &lightgrid.leafs[leaf_index as usize];
+		if print.load(Ordering::Relaxed) { println!("  Render node {node_index:?} -- leaf {leaf_index:?}"); }
+		render_lightgrid_leaf(d3d, lightgrid, leaf, pos, header);
+	} else {
+		if print.load(Ordering::Relaxed) { println!("  Render node recurse: {node_index:?}"); }
+		render_lightgrid_leafs_recursive(d3d, lightgrid, &lightgrid.nodes[node_index as usize], pos, header);
+	}
+}
+
+fn render_lightgrid_leaf(d3d: &mut RaylibMode3D<'_, RaylibDrawHandle>, lightgrid: &Lightgrid, leaf: &LightgridLeaf, pos: Vector3, header: &LightgridHeader) {
+	let leaf_pos = Vector3::new(leaf.mins[2] as f32, leaf.mins[1] as f32, leaf.mins[0] as f32);
+
+	for z in 0..leaf.size[0] {
+		for y in 0..leaf.size[1] {
+			for x in 0..leaf.size[2] {
+				let sample_pos = Vector3::new(x as f32, y as f32, z as f32);
+				let sample_idx = leaf.sample_start_idx + z + y * leaf.size[0] + x * (leaf.size[0] * leaf.size[1]);
+				let sample_set = lightgrid.samples[sample_idx as usize];
+
+				if print.load(Ordering::Relaxed) { print!("   Render leaf sample: {sample_pos:?} {sample_idx:?} {:?}", sample_set.used_styles); }
+
+				if sample_set.used_styles > 0 && sample_set.used_styles != 0xff {
+					let color_u8 = lightgrid.samples[sample_idx as usize].samples[0].color;
+					let color = Color::new(color_u8[0], color_u8[1], color_u8[2], 255u8);
+					if print.load(Ordering::Relaxed) { println!(" Color is {color:?}"); }
+					d3d.draw_sphere(to_wld(header.grid_mins + (leaf_pos + sample_pos) * header.grid_dist), 1f32, color);
+				} else {
+					if print.load(Ordering::Relaxed) { println!(" OCCLUDED"); }
+				}
+			}
+		}
+	}
 }
 
 fn gen_pixels(pixels: Vec<u8>, width: u32, height: u32) -> Vec<u8>

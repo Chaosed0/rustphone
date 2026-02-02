@@ -72,8 +72,8 @@ impl Player {
 				let passable = DPASS.complement();
 				let desired_move = self.pos + move_dir * delta;
 
-				println!("Attempting stair climb: {:?} {:?} {:?} {:?}", self.pos, desired_move, MAX_STEP, passable);
-				let climb_intersect = ray_intersect_debug(bsp, desired_move, Vector3::Y, MAX_STEP, passable);
+				//println!("Attempting stair climb: {:?} {:?} {:?} {:?}", self.pos, desired_move, MAX_STEP, passable);
+				let climb_intersect = ray_intersect(bsp, desired_move, Vector3::Y, MAX_STEP, passable);
 
 				if let Some(climb_intersect) = climb_intersect {
 					// Normal is negated because it points into the solid
