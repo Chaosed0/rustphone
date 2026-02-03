@@ -1,5 +1,5 @@
 use raylib::prelude::*;
-use crate::bsp::{self, Bsp};
+use crate::bsp::*;
 use crate::lit::LightmapData;
 use glow::*;
 use ::core::ffi::c_void;
@@ -14,6 +14,7 @@ pub struct BspRender
 {
 	gl: Context,
 	data: Option<RenderData>,
+	lightgrid_data: Option<LightgridData>,
 	skybox: Option<NativeTexture>,
 	shaders: Option<ShaderSet>
 }
@@ -25,6 +26,12 @@ struct RenderData
 	ibo: NativeBuffer,
 	cmds: Vec<DrawElementsIndirectCommand>,
 	cmd_count: i32,
+}
+
+struct LightgridData
+{
+	data: GlLightgridData,
+	sample_buffer: NativeBuffer,
 }
 
 struct ShaderSet
@@ -56,6 +63,14 @@ struct GlVert
 	pos: Vector3,
 	col: Vector4,
 	st: Vector4,
+}
+
+#[repr(C)]
+struct GlLightgridData
+{
+	pub grid_dist: Vector3,
+	pub grid_size: [i32;3],
+	pub grid_mins: Vector3,
 }
 
 impl Debug for GlVert
@@ -131,7 +146,7 @@ impl BspRender
 
 		let gl = unsafe { glow::Context::from_loader_function(|s| gl_loader::get_proc_address(s) as *const c_void) };
 
-		return BspRender { gl, data: None, skybox: None, shaders: None };
+		return BspRender { gl, data: None, lightgrid_data: None, skybox: None, shaders: None };
 	}
 
 	pub fn build_buffers(&mut self, bsp: &Bsp, light_data: &LightmapData)
@@ -278,6 +293,35 @@ impl BspRender
 		//println!("ELEMS {:?}", indexes);
 	}
 
+	pub fn build_lightgrid_data(&mut self, lightgrid: &Lightgrid)
+	{
+		let data = GlLightgridData { grid_dist: lightgrid.header.grid_dist, grid_size: lightgrid.header.grid_size, grid_mins: lightgrid.header.grid_mins };
+		let mut samples = vec!(Default::default(); (data.grid_size[0] * data.grid_size[1] * data.grid_size[2]) as usize);
+
+		for leaf in &lightgrid.leafs {
+			for z in 0..leaf.size[2] {
+				for y in 0..leaf.size[1] {
+					for x in 0..leaf.size[0] {
+						let sample_idx = leaf.sample_start_idx + (x + y * leaf.size[0] + z * leaf.size[1] * leaf.size[0]) as usize;
+						let sample = lightgrid.samples[sample_idx];
+						let color = sample.samples[0].color;
+						let gl_color = Color::new(color[0], color[1], color[2], if sample.used_styles > 0 { 255u8 } else { 0u8 });
+						samples[sample_idx] = gl_color;
+					}
+				}
+			}
+		}
+
+		unsafe {
+			let samples_u8: &[u8] = std::slice::from_raw_parts(samples.as_ptr() as *const u8, samples.len() * size_of::<Color>());
+			let ssbo = self.gl.create_buffer().unwrap();
+			self.gl.bind_buffer(SHADER_STORAGE_BUFFER, Some(ssbo));
+			self.gl.buffer_data_u8_slice(SHADER_STORAGE_BUFFER, samples_u8, STATIC_READ);
+			self.gl.bind_buffer_base(SHADER_STORAGE_BUFFER, 3, Some(ssbo));
+			self.gl.bind_buffer(SHADER_STORAGE_BUFFER, None);
+		}
+	}
+
 	pub fn load_shaders(&mut self, rl_default: &RlShader, rl_cutout: &RlShader, rl_skybox: &RlShader)
 	{
 		println!("Loading default shader");
@@ -384,13 +428,13 @@ impl BspRender
 
 				match bsptex.tex_type
 				{
-					bsp::TextureType::Cutout => {
+					TextureType::Cutout => {
 						shaders.cutout._use(&self.gl);
 						self.bind_texture(TEXTURE0, &gl_tex, shaders.cutout.locs.texture, 0);
 						self.bind_texture(TEXTURE1, &gl_lm, shaders.cutout.locs.lightmap, 1);
 						self.gl.uniform_matrix_4_f32_slice(shaders.cutout.locs.mvp.as_ref(), false, &mat_f32);
 					}
-					bsp::TextureType::Sky => {
+					TextureType::Sky => {
 						shaders.skybox._use(&self.gl);
 						self.bind_texture(TEXTURE0, &self.skybox.unwrap(), shaders.cutout.locs.skybox, 0);
 						self.gl.uniform_matrix_4_f32_slice(shaders.skybox.locs.mvp.as_ref(), false, &mat_f32);

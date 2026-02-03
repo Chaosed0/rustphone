@@ -55,8 +55,11 @@ async fn main() -> Result<(), Box<dyn Error>>
 	let skybox_vs = exe_dir_path.join("assets/shaders/skybox.vs").to_str().expect("No vpath").to_owned();
 	let skybox_fs = exe_dir_path.join("assets/shaders/skybox.fs").to_str().expect("No fpath").to_owned();
 	let skybox_shader = rl.load_shader(&thread, Some(skybox_vs.as_str()), Some(skybox_fs.as_str()));
+	let mesh_vs = exe_dir_path.join("assets/shaders/mesh.vs").to_str().expect("No vpath").to_owned();
+	let mesh_fs = exe_dir_path.join("assets/shaders/mesh.fs").to_str().expect("No fpath").to_owned();
+	let mut mesh_shader = rl.load_shader(&thread, Some(mesh_vs.as_str()), Some(mesh_fs.as_str()));
 
-	assert!(default_shader.is_shader_valid() && cutout_shader.is_shader_valid() && skybox_shader.is_shader_valid(), "Error compiling shaders");
+	assert!(default_shader.is_shader_valid() && cutout_shader.is_shader_valid() && skybox_shader.is_shader_valid() && mesh_shader.is_shader_valid(), "Error compiling shaders");
 
 	bsp_render.load_shaders(&default_shader, &cutout_shader, &skybox_shader);
 
@@ -102,6 +105,17 @@ async fn main() -> Result<(), Box<dyn Error>>
 			return tex;
 		}).collect::<Vec<Texture2D>>();
 
+	if let Some(lightgrid) = &bsp.lightgrid {
+		bsp_render.build_lightgrid_data(lightgrid);
+
+		let header_loc = mesh_shader.get_shader_location("lightgrid_data");
+		mesh_shader.set_shader_value(header_loc, lightgrid.header.grid_mins);
+		mesh_shader.set_shader_value(header_loc + 1, lightgrid.header.grid_size[0]);
+		mesh_shader.set_shader_value(header_loc + 2, lightgrid.header.grid_size[1]);
+		mesh_shader.set_shader_value(header_loc + 3, lightgrid.header.grid_size[2]);
+		mesh_shader.set_shader_value(header_loc + 4, lightgrid.header.grid_dist);
+	}
+
 	//let mut time = 0f32;
 
 	//println!("ENTITIES: {:?}", bsp.entities);
@@ -123,8 +137,18 @@ async fn main() -> Result<(), Box<dyn Error>>
     let bsp_visq = bsp_query::BspVisQuery::new(&bsp);
     let bsp_clipq = bsp_query::BspClipQuery::new(&bsp);
 
+	let mut cube_pos = Vector3::Y * 64f32;
+	let mut cube_dir = 1f32;
+
     while !rl.window_should_close() {
 		let dt = rl.get_frame_time();
+
+		cube_pos += cube_dir * Vector3::X * 64f32 * dt;
+		if cube_dir > 0f32 && cube_pos.x > 256f32 {
+			cube_dir = -1f32;
+		} else if cube_dir < 0f32 && cube_pos.x < 0f32 {
+			cube_dir = 1f32;
+		}
 
 		if rl.is_key_pressed(KeyboardKey::KEY_ESCAPE) {
 			rl.enable_cursor();
@@ -171,14 +195,17 @@ async fn main() -> Result<(), Box<dyn Error>>
 			let projection: Matrix = unsafe { raylib::ffi::rlGetMatrixProjection().try_into().unwrap() };
 			bsp_render.render(&textures, &lightmaps, &bsp, modelview * projection, cam);
 
+			d3d.draw_shader_mode(&mut mesh_shader, |mut dsm| {
+				dsm.draw_cube(cube_pos, 64f32, 64f32, 64f32, Color::WHITE);
+			});
+
             if let Some(end) = raycast_end &&
                 let Some(pos) = raycast_position {
                 d3d.draw_sphere_wires(end, 4f32, 8, 8, Color::ORANGE); 
                 d3d.draw_ray(Ray::new(pos, end - pos), Color::RED);
             }
 
-			render_lightgrid_leafs(&mut d3d, &bsp);
-			print.store(false, std::sync::atomic::Ordering::Relaxed);
+			//render_lightgrid_leafs(&mut d3d, &bsp);
 		});
 
 		d.draw_texture_ex(&lightmaps[0], Vector2::new(10f32, 10f32), 0f32, 0.2f32, Color::WHITE);
@@ -188,8 +215,6 @@ async fn main() -> Result<(), Box<dyn Error>>
 
 	return Ok(());
 }
-
-static print: AtomicBool = AtomicBool::new(true);
 
 fn render_lightgrid_leafs(d3d: &mut RaylibMode3D<'_, RaylibDrawHandle>, bsp: &Bsp) {
 	let Some(lightgrid) = bsp.lightgrid.as_ref() else { return; };
@@ -212,37 +237,31 @@ fn get_octant_offset(i: u32, div_point: [i32;3]) -> Vector3 {
 
 fn render_lightgrid_node(d3d: &mut RaylibMode3D<'_, RaylibDrawHandle>, lightgrid: &Lightgrid, node_index: u32, pos: Vector3, header: &LightgridHeader) {
 	if (node_index & LIGHTGRID_OCCLUDED) > 0 {
-		if print.load(Ordering::Relaxed) { println!("  Node {node_index} is occluded"); }
 	} else if (node_index & LIGHTGRID_LEAF) > 0 {
 		let leaf_index = node_index & (!LIGHTGRID_LEAF);
 		let leaf = &lightgrid.leafs[leaf_index as usize];
-		if print.load(Ordering::Relaxed) { println!("  Render node {node_index:?} -- leaf {leaf_index:?}"); }
 		render_lightgrid_leaf(d3d, lightgrid, leaf, pos, header);
 	} else {
-		if print.load(Ordering::Relaxed) { println!("  Render node recurse: {node_index:?}"); }
 		render_lightgrid_leafs_recursive(d3d, lightgrid, &lightgrid.nodes[node_index as usize], pos, header);
 	}
 }
 
 fn render_lightgrid_leaf(d3d: &mut RaylibMode3D<'_, RaylibDrawHandle>, lightgrid: &Lightgrid, leaf: &LightgridLeaf, pos: Vector3, header: &LightgridHeader) {
-	let leaf_pos = Vector3::new(leaf.mins[2] as f32, leaf.mins[1] as f32, leaf.mins[0] as f32);
+	let leaf_pos = Vector3::new(leaf.mins[0] as f32, leaf.mins[1] as f32, leaf.mins[2] as f32);
 
-	for z in 0..leaf.size[0] {
+	for z in 0..leaf.size[2] {
 		for y in 0..leaf.size[1] {
-			for x in 0..leaf.size[2] {
+			for x in 0..leaf.size[0] {
 				let sample_pos = Vector3::new(x as f32, y as f32, z as f32);
-				let sample_idx = leaf.sample_start_idx + z + y * leaf.size[0] + x * (leaf.size[0] * leaf.size[1]);
+				let sample_idx = leaf.sample_start_idx + (x + y * leaf.size[0] + z * (leaf.size[0] * leaf.size[1])) as usize;
 				let sample_set = lightgrid.samples[sample_idx as usize];
-
-				if print.load(Ordering::Relaxed) { print!("   Render leaf sample: {sample_pos:?} {sample_idx:?} {:?}", sample_set.used_styles); }
 
 				if sample_set.used_styles > 0 && sample_set.used_styles != 0xff {
 					let color_u8 = lightgrid.samples[sample_idx as usize].samples[0].color;
 					let color = Color::new(color_u8[0], color_u8[1], color_u8[2], 255u8);
-					if print.load(Ordering::Relaxed) { println!(" Color is {color:?}"); }
-					d3d.draw_sphere(to_wld(header.grid_mins + (leaf_pos + sample_pos) * header.grid_dist), 1f32, color);
-				} else {
-					if print.load(Ordering::Relaxed) { println!(" OCCLUDED"); }
+					let position = header.grid_mins + (leaf_pos + sample_pos) * header.grid_dist;
+
+					d3d.draw_sphere(to_wld(position), 1f32, color);
 				}
 			}
 		}
