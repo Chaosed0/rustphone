@@ -40,8 +40,8 @@ async fn main() -> Result<(), Box<dyn Error>>
         .build();
 
     let transport = Transport::new(gns_global.clone(), Ipv4Addr::LOCALHOST.into(), 27821).expect("connection failed");
-	let bsp = load_bsp("assets/box.bsp");
-	//let bsp = load_bsp("assets/qbj3_chaosed0.bsp");
+	//let bsp = load_bsp("assets/box.bsp");
+	let bsp = load_bsp("assets/qbj3_chaosed0.bsp");
 	let mut bsp_render = BspRender::new();
 
 	bsp_render.load_skybox("assets/skybox/mak_cloudysky5");
@@ -108,12 +108,16 @@ async fn main() -> Result<(), Box<dyn Error>>
 	if let Some(lightgrid) = &bsp.lightgrid {
 		bsp_render.build_lightgrid_data(lightgrid);
 
-		let header_loc = mesh_shader.get_shader_location("lightgrid_data");
-		mesh_shader.set_shader_value(header_loc, lightgrid.header.grid_mins);
-		mesh_shader.set_shader_value(header_loc + 1, lightgrid.header.grid_size[0]);
-		mesh_shader.set_shader_value(header_loc + 2, lightgrid.header.grid_size[1]);
-		mesh_shader.set_shader_value(header_loc + 3, lightgrid.header.grid_size[2]);
-		mesh_shader.set_shader_value(header_loc + 4, lightgrid.header.grid_dist);
+		let dist_loc = mesh_shader.get_shader_location("lgData.dist");
+		let size_x_loc = mesh_shader.get_shader_location("lgData.size_x");
+		let size_y_loc = mesh_shader.get_shader_location("lgData.size_y");
+		let size_z_loc = mesh_shader.get_shader_location("lgData.size_z");
+		let mins_loc = mesh_shader.get_shader_location("lgData.mins");
+		mesh_shader.set_shader_value(dist_loc, to_wld(lightgrid.header.grid_dist));
+		mesh_shader.set_shader_value(size_x_loc, lightgrid.header.grid_size[1]);
+		mesh_shader.set_shader_value(size_y_loc, lightgrid.header.grid_size[2]);
+		mesh_shader.set_shader_value(size_z_loc, lightgrid.header.grid_size[0]);
+		mesh_shader.set_shader_value(mins_loc, to_wld(lightgrid.header.grid_mins));
 	}
 
 	//let mut time = 0f32;
@@ -196,7 +200,9 @@ async fn main() -> Result<(), Box<dyn Error>>
 			bsp_render.render(&textures, &lightmaps, &bsp, modelview * projection, cam);
 
 			d3d.draw_shader_mode(&mut mesh_shader, |mut dsm| {
-				dsm.draw_cube(cube_pos, 64f32, 64f32, 64f32, Color::WHITE);
+				bsp_render.bind_lightgrid_data();
+				//dsm.draw_cube(cube_pos, 64f32, 64f32, 64f32, Color::WHITE);
+				dsm.draw_cube(cam.position + cam.forward() * 16f32, 4f32, 4f32, 4f32, Color::WHITE);
 			});
 
             if let Some(end) = raycast_end &&

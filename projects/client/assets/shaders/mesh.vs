@@ -2,7 +2,9 @@
 
 struct LightgridData {
 	vec3 dist;
-	int size[3];
+	int size_x;
+	int size_y;
+	int size_z;
 	vec3 mins;
 };
 
@@ -20,10 +22,11 @@ out vec2 texCoord;
 
 uniform mat4 mvp;
 uniform LightgridData lgData;
+uniform float beh;
 
 int lg_index(int x, int y, int z)
 {
-	return x + y * lgData.size[0] + z * lgData.size[0] * lgData.size[1];
+	return x + y * lgData.size_x + z * lgData.size_x * lgData.size_y;
 }
 
 vec4 lg_avg(vec4 sample1, vec4 sample2, float val)
@@ -47,9 +50,9 @@ void main()
 	vec3 vert = vertexPosition;
 
 	vec3 lgGridpos = (vert - lgData.mins) / lgData.dist;
-	int lgGridX = int(clamp(lgGridpos.x, 0.0, float(lgData.size[0])));
-	int lgGridY = int(clamp(lgGridpos.y, 0.0, float(lgData.size[1])));
-	int lgGridZ = int(clamp(lgGridpos.z, 0.0, float(lgData.size[2])));
+	int lgGridX = int(clamp(lgGridpos.x, 0.0, float(lgData.size_x)));
+	int lgGridY = int(clamp(lgGridpos.y, 0.0, float(lgData.size_y)));
+	int lgGridZ = int(clamp(lgGridpos.z, 0.0, float(lgData.size_z)));
 
 	vec4 samplex0y0z0 = lightgridBuffer.samples[lg_index(lgGridX + 0, lgGridY + 0, lgGridZ + 0)];
 	vec4 samplex1y0z0 = lightgridBuffer.samples[lg_index(lgGridX + 1, lgGridY + 0, lgGridZ + 0)];

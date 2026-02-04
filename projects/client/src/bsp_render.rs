@@ -30,7 +30,6 @@ struct RenderData
 
 struct LightgridData
 {
-	data: GlLightgridData,
 	sample_buffer: NativeBuffer,
 }
 
@@ -63,14 +62,6 @@ struct GlVert
 	pos: Vector3,
 	col: Vector4,
 	st: Vector4,
-}
-
-#[repr(C)]
-struct GlLightgridData
-{
-	pub grid_dist: Vector3,
-	pub grid_size: [i32;3],
-	pub grid_mins: Vector3,
 }
 
 impl Debug for GlVert
@@ -295,8 +286,9 @@ impl BspRender
 
 	pub fn build_lightgrid_data(&mut self, lightgrid: &Lightgrid)
 	{
-		let data = GlLightgridData { grid_dist: lightgrid.header.grid_dist, grid_size: lightgrid.header.grid_size, grid_mins: lightgrid.header.grid_mins };
-		let mut samples = vec!(Default::default(); (data.grid_size[0] * data.grid_size[1] * data.grid_size[2]) as usize);
+		let grid_size = [lightgrid.header.grid_size[1], lightgrid.header.grid_size[2], lightgrid.header.grid_size[0]];
+		let mut gl_samples = vec!(Default::default(); (grid_size[0] * grid_size[1] * grid_size[2]) as usize);
+		println!("LEN {:?}", gl_samples.len());
 
 		for leaf in &lightgrid.leafs {
 			for z in 0..leaf.size[2] {
@@ -305,20 +297,23 @@ impl BspRender
 						let sample_idx = leaf.sample_start_idx + (x + y * leaf.size[0] + z * leaf.size[1] * leaf.size[0]) as usize;
 						let sample = lightgrid.samples[sample_idx];
 						let color = sample.samples[0].color;
-						let gl_color = Color::new(color[0], color[1], color[2], if sample.used_styles > 0 { 255u8 } else { 0u8 });
-						samples[sample_idx] = gl_color;
+						let gl_color = Vector4::new(color[0] as f32 / 255f32, color[1] as f32 / 255f32, color[2] as f32 / 255f32, if sample.used_styles > 0 { 1f32 } else { 0f32 });
+						let gl_sample_pos = [ leaf.mins[1] + y, leaf.mins[2] + z, leaf.mins[0] + x ];
+						let gl_sample_idx = (gl_sample_pos[0] + gl_sample_pos[1] * grid_size[0] + gl_sample_pos[2] * grid_size[0] * grid_size[1]) as usize;
+						gl_samples[gl_sample_idx] = gl_color;
 					}
 				}
 			}
 		}
 
 		unsafe {
-			let samples_u8: &[u8] = std::slice::from_raw_parts(samples.as_ptr() as *const u8, samples.len() * size_of::<Color>());
+			let samples_u8: &[u8] = std::slice::from_raw_parts(gl_samples.as_ptr() as *const u8, gl_samples.len() * size_of::<Vector4>());
 			let ssbo = self.gl.create_buffer().unwrap();
 			self.gl.bind_buffer(SHADER_STORAGE_BUFFER, Some(ssbo));
-			self.gl.buffer_data_u8_slice(SHADER_STORAGE_BUFFER, samples_u8, STATIC_READ);
-			self.gl.bind_buffer_base(SHADER_STORAGE_BUFFER, 3, Some(ssbo));
+			self.gl.buffer_data_u8_slice(SHADER_STORAGE_BUFFER, samples_u8, STATIC_DRAW);
 			self.gl.bind_buffer(SHADER_STORAGE_BUFFER, None);
+
+			self.lightgrid_data = Some(LightgridData { sample_buffer: ssbo });
 		}
 	}
 
@@ -452,6 +447,15 @@ impl BspRender
 			}
 
 			self.gl.use_program(None);
+		}
+	}
+
+	pub fn bind_lightgrid_data(&self)
+	{
+		unsafe {
+			if let Some(lightgrid_data) = &self.lightgrid_data {
+				self.gl.bind_buffer_base(SHADER_STORAGE_BUFFER, 3, Some(lightgrid_data.sample_buffer));
+			}
 		}
 	}
 
