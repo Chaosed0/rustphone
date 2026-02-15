@@ -9,6 +9,6 @@ uniform sampler2D lightmap;
 
 void main()
 {
-    FragColor = vec4(col, 1.0) * texture(tex, st.xy) * (texture(lightmap, st.zw) * 4f);
+    FragColor = vec4(col, 1.0) * texture(tex, st.xy) * (texture(lightmap, st.zw) * 4.0);
 	//FragColor = texture(lightmap, st.zw);
 }
