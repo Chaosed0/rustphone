@@ -1,4 +1,4 @@
-use shared::Message;
+use shared::message::Message;
 use gns::*;
 use std::net::IpAddr;
 use std::sync::Arc;

@@ -1,32 +1,26 @@
 mod transport;
 use transport::Transport;
 
-mod bsp;
-use bsp::*;
-
-mod bsp_entity;
-
 mod bsp_render;
 use bsp_render::*;
 
-mod lit;
-use lit::*;
+mod bsp_lit;
+use bsp_lit::*;
 
 mod palette;
 use palette::PALETTE;
-
-mod bsp_query;
-use bsp_query::*;
-
-mod player;
-use player::Player;
 
 use std::{f32::consts::PI, ffi::c_void, sync::atomic::{AtomicBool, Ordering} };
 use raylib::prelude::*;
 use gns::GnsGlobal;
 use std::net::Ipv4Addr;
-use shared::Message;
 use std::error::Error;
+
+use shared::message::Message;
+use shared::bsp_entity;
+use shared::bsp::*;
+use shared::bsp_query::*;
+use shared::player::Player;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>>
@@ -41,7 +35,7 @@ async fn main() -> Result<(), Box<dyn Error>>
 
     let transport = Transport::new(gns_global.clone(), Ipv4Addr::LOCALHOST.into(), 27821).expect("connection failed");
 	//let bsp = load_bsp("assets/box.bsp");
-	let bsp = load_bsp("assets/qbj3_chaosed0.bsp");
+	//let bsp = load_bsp("assets/qbj3_chaosed0.bsp");
 	let mut bsp_render = BspRender::new();
 
 	bsp_render.load_skybox("assets/skybox/mak_cloudysky5");
@@ -138,8 +132,8 @@ async fn main() -> Result<(), Box<dyn Error>>
     let mut raycast_position = None;
     let mut raycast_end = None;
 
-    let bsp_visq = bsp_query::BspVisQuery::new(&bsp);
-    let bsp_clipq = bsp_query::BspClipQuery::new(&bsp);
+    let bsp_visq = BspVisQuery::new(&bsp);
+    let bsp_clipq = BspClipQuery::new(&bsp);
 
 	let mut cube_pos = Vector3::Y * 64f32;
 	let mut cube_dir = 1f32;

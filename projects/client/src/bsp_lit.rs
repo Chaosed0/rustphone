@@ -1,5 +1,5 @@
 use texture_packer::{texture::Texture, *};
-use crate::bsp::*;
+use shared::bsp::*;
 use raylib::prelude::Vector2;
 
 const PAGE_SIZE: u32 = 256;

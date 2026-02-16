@@ -1,6 +1,6 @@
 use raylib::prelude::*;
-use crate::bsp::*;
-use crate::lit::LightmapData;
+use shared::bsp::*;
+use crate::bsp_lit::LightmapData;
 use glow::*;
 use ::core::ffi::c_void;
 use ::core::num::NonZeroU32;

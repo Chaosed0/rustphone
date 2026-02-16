@@ -1,4 +1,4 @@
-use shared::Message;
+use shared::message::Message;
 use gns::*;
 use crate::transport::sys::ESteamNetworkingConnectionState;
 use std::net::IpAddr;

@@ -294,17 +294,12 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 name = "game"
 version = "0.1.0"
 dependencies = [
- "byteorder",
- "enumset",
  "game-networking-sockets",
  "gl_loader",
  "glow",
  "itertools 0.14.0",
- "lazy_static",
  "raylib",
  "shared",
- "strum",
- "strum_macros",
  "texture_packer",
  "tokio",
 ]
@@ -768,6 +763,14 @@ dependencies = [
 [[package]]
 name = "shared"
 version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "enumset",
+ "lazy_static",
+ "raylib",
+ "strum",
+ "strum_macros",
+]
 
 [[package]]
 name = "shlex"

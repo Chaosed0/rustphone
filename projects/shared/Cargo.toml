@@ -4,3 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+byteorder = "1.5.0"
+enumset = "1.1.10"
+lazy_static = "1.5.0"
+strum = "0.27.2"
+strum_macros = "0.27.2"
+raylib = { git = "https://github.com/raylib-rs/raylib-rs.git", rev = "c574449", features = ["SUPPORT_FILEFORMAT_TGA"] }
